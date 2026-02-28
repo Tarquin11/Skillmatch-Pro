@@ -1,0 +1,81 @@
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from app.db.database import get_db
+from app.models.employee import Employee
+from app.schemas.employee import EmployeeCreate, EmployeeOut, EmployeeUpdate
+from app.api.auth import get_current_active_user, require_roles
+from app.models.user import User
+
+router = APIRouter(dependencies=[Depends(get_current_active_user)])
+
+@router.get("/", response_model=List[EmployeeOut])
+def read_employees(
+    skip: int = 0,
+    limit: int = 20,
+    department: Optional[str] = Query(default=None),
+    position: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Employee)
+    if department:
+        dep = department.strip()
+        query = query.filter(func.lower(func.trim(Employee.department)).like(f"%{dep.lower()}%"))
+    if position:
+        pos = position.strip()
+        query = query.filter(func.lower(func.trim(Employee.position)).like(f"%{pos.lower()}%"))
+    return query.offset(skip).limit(limit).all()
+
+
+@router.get("/{employee_id}", response_model=EmployeeOut)
+def get_employee(employee_id: int, db: Session = Depends(get_db)):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found"})
+    return employee
+
+
+@router.post("/", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
+def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+    data = payload.model_dump(by_alias=False)
+
+    existing = db.query(Employee).filter(Employee.employee_number == data["employee_number"]).first()
+    if existing:
+        raise HTTPException(status_code=409, detail={"code": "employee_number_already_exists", "message": "Employee number already exists"})
+
+    existing_email = db.query(Employee).filter(Employee.email == data["email"]).first()
+    if existing_email:
+        raise HTTPException(status_code=409, detail={"code": "email_already_registered", "message": "Email already registered"})
+
+    employee = Employee(**data)
+    db.add(employee)
+    db.commit()
+    db.refresh(employee)
+    return employee
+
+
+@router.put("/{employee_id}", response_model=EmployeeOut)
+def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found / Employée Pas trouvé"})
+
+    updates = payload.model_dump(exclude_unset=True, by_alias=False)
+    for field, value in updates.items():
+        setattr(employee, field, value)
+
+    db.commit()
+    db.refresh(employee)
+    return employee
+
+
+@router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def delete_employee(employee_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found / Employée Pas trouvé"})
+
+    db.delete(employee)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
