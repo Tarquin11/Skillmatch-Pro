@@ -10,7 +10,7 @@ from app.api.department import router as departements_router
 app = FastAPI(title="SkillMatch Pro")
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(employees_router, prefix="/employees", tags=["Employees"])
-app.include_router(candidates_router, prefix="/candidates", tags=["Candidates"])
+app.include_router(candidates_router)
 app.include_router(match_router)
 app.include_router(jobs_router)
 app.include_router(skills_router)

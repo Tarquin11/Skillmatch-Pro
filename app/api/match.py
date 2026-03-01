@@ -8,6 +8,7 @@ from app.services.matching import calculate_match_score
 
 router = APIRouter(prefix="/match",tags=["matching"],dependencies=[Depends(get_current_active_user)],)
 
+@router.post("/job", response_model=JobMatchResponse)
 @router.post("/jobs", response_model=JobMatchResponse)
 def rank_candidates(payload: JobMatchRequest, db: Session = Depends(get_db)):
     employees = db.query(Employee).all()

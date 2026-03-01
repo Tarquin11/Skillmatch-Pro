@@ -6,7 +6,7 @@ class MatchingService:
         self.embedding_service = EmbeddingService()
 
     def rank_candidates(self, job_text: str, candidates: list[dict], threshold: float = 0.0) -> list[dict]:
-        if not candidates or not job_text.strip():
+        if not candidates or not (job_text or "").strip():
             return []
         job_embedding = np.array(
             self.embedding_service.generate_embedding(job_text), 
@@ -29,6 +29,8 @@ class MatchingService:
             print(f"Embedding error: {e}")
             return []
         similarity_scores = candidate_embeddings @ job_embedding
+        if len(candidate_embeddings) == 0:
+            return []
 
         ranked = [
             {"candidate": c, "score": float(s)}

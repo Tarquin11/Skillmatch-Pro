@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from typing import Iterable, Optional, Sequence
+from app.services.embedding_service import compute_semantic_similarity
 
 
 PERFORMANCE_MAPPING = {
@@ -11,10 +12,8 @@ PERFORMANCE_MAPPING = {
     "inacceptable": 0.4,
     "non applicable": 0.2,
 }
-
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 _embedding_service = None
-
 
 def performance_weight(score: Optional[str]) -> float:
     normalized = (score or "").strip().lower()
@@ -92,7 +91,7 @@ def _semantic_similarity(target_text: str, employee_text: str) -> float:
         service = _get_embedding_service()
         vec1 = service.generate_embedding(target_text)
         vec2 = service.generate_embedding(employee_text)
-        return service.cosine_similarity(vec1, vec2)
+        return compute_semantic_similarity(vec1, vec2)
     except Exception:
         # Keep ranking functional even when embedding model fails.
         return 0.0
