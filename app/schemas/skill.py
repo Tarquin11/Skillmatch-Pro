@@ -1,11 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class SkillBase(BaseModel):
     name : Optional[str] = None
-
-    class Config: 
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SkillCreate(SkillBase):
     name : str
@@ -25,8 +23,6 @@ class EmployeeSkillOut(BaseModel):
     employee_id: int
     skill_id: int
     level: Optional[int] = None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 

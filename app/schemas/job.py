@@ -1,14 +1,11 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class jobBase(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     department: Optional[str] = Field(default=None, alias="departement")
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 class JobCreate(jobBase):
     title: str
@@ -30,6 +27,4 @@ class JobSkillRequirementOut(BaseModel):
     skill_id: int
     required_level: Optional[int] = None
     weight: Optional[float] = None
-
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

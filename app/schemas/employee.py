@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Optional
-from pydantic import BaseModel, Field , EmailStr
+from pydantic import BaseModel, Field , EmailStr, ConfigDict
 
 class EmployeeBase(BaseModel):
     employee_number: Optional[str] = Field(default=None, alias="employeeNumber")
@@ -12,10 +12,7 @@ class EmployeeBase(BaseModel):
     position: Optional[str] = None
     performance_score: Optional[str] = None
     hire_date : Optional[date] = None
-
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 class EmployeeCreate(EmployeeBase):
     employee_number: str = Field(alias="employeeNumber")  
