@@ -68,7 +68,7 @@ def create_departement(
             detail={"code": "departement_already_exists", "message": "Departement already exists"},
         )
 
-    departement = Departement(name=name, description=payload.description)
+    departement = Departement(name=name)
     db.add(departement)
     db.commit()
     db.refresh(departement)
