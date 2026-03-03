@@ -13,5 +13,8 @@ def load_matcher_artifact(pat: str) -> Optional[CandidateMatcher]:
     if not model_path.exists():
         _matcher = None
         return None
-    _matcher = CandidateMatcher.load(model_path)
+    try:
+        _matcher = CandidateMatcher.load(model_path)
+    except Exception:
+        _matcher = None
     return _matcher

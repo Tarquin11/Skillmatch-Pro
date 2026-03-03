@@ -18,7 +18,6 @@ FEATURE_COLUMNS = [
     "currently_active",
 ]
 
-
 class FeatureEngineer:
     def __init__(self, use_semantic: bool = True):
         self.use_semantic = use_semantic
@@ -60,7 +59,7 @@ class FeatureEngineer:
 
         try:
             v_job = self._get_cached_embedding(job_text)
-            v_emp = self._get_cached_embedding(job_text)
+            v_emp = self._get_cached_embedding(employee_text)
             return float(compute_semantic_similarity(v_job, v_emp))
         except Exception:
             return 0.0
@@ -125,7 +124,7 @@ class FeatureEngineer:
             return self._embedding_cache[key]
         
         svc = self._get_embedding_service()
-        vec = np.asarray(svc.generate_embeddings(key), dtype=np.float32)
+        vec = np.asarray(svc.generate_embedding(key), dtype=np.float32)
         self._embedding_cache[key]= vec
         return vec
     
@@ -139,16 +138,15 @@ class FeatureEngineer:
             job = row["job"] if isinstance(row["job"], dict) and "required_skills" in row["job"] else preprocess_job(row["job"])
 
             jt = self._job_text(job).strip().lower()
-            et = self._job_text(employee).strip().lower()
+            et = self._employee_text(employee).strip().lower()
             if jt:
                 unique_texts.add(jt)
             if et:
                 unique_texts.add(et)
-            texts = [t for t in unique_texts if t and t not in self._embedding_cache]
-            if not texts:
-                return
-            
-            svc = self._get_embedding_service()
-            vectors = svc.generate_embeddings(texts, batch_size=batch_size)
-            for t,v in zip(texts, vectors):
-                self._embedding_cache[t] = np.asarray(v, dtype=np.float32)
+        texts = [t for t in unique_texts if t and t not in self._embedding_cache]
+        if not texts:
+            return   
+        svc = self._get_embedding_service()
+        vectors = svc.generate_embeddings(texts, batch_size=batch_size)
+        for t,v in zip(texts, vectors):
+            self._embedding_cache[t] = np.asarray(v, dtype=np.float32)

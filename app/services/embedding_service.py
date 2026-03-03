@@ -7,16 +7,32 @@ from typing import Sequence
 logging.set_verbosity_error()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+
 class EmbeddingService:
     def __init__(self):
-        self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-    
-    def generate_embeddings(self, texts: list[str], batch_size: int = 256)-> list[list[float]]:
+        self.model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+
+    def generate_embedding(self, text: str) -> list[float]:
+        if not text:
+            return []
+        embedding = self.model.encode(
+            text,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return embedding.tolist()
+
+    def generate_embeddings(self, texts: list[str], batch_size: int = 256) -> list[list[float]]:
         if not texts:
             return []
-        embeddings = self.model.encode(texts,batch_size=batch_size, normalize_embeddings=True, show_progress_bar=False)
+        embeddings = self.model.encode(
+            texts,
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
         return embeddings.tolist()
-    
+
     def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         return compute_semantic_similarity(vec1, vec2)
 
@@ -27,6 +43,7 @@ def compute_semantic_similarity(
 ) -> float:
     if vec1 is None or vec2 is None:
         return 0.0
+
     v1 = np.asarray(vec1, dtype=np.float32).reshape(-1)
     v2 = np.asarray(vec2, dtype=np.float32).reshape(-1)
 
@@ -34,5 +51,5 @@ def compute_semantic_similarity(
         return 0.0
     if v1.shape != v2.shape:
         return 0.0
-    
-    return float(np.dot(v1,v2))
+
+    return float(np.dot(v1, v2))
