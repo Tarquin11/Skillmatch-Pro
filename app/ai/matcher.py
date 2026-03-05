@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Any, Sequence
 import joblib
 import numpy as np
+import os
+from datetime import datetime, timezone
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score,ndcg_score,precision_recall_fscore_support,roc_auc_score
 from sklearn.model_selection import train_test_split
@@ -29,6 +31,10 @@ class TrainResult:
 
 
 class CandidateMatcher:
+
+    MODEL_NAME = "candidate_matcher"
+    ARTIFACT_SCHEMA_VERSION = "1.0.0"
+
     def __init__(self, use_semantic: bool = True):
         self.feature_engineer = FeatureEngineer(use_semantic=use_semantic)
         self.model = Pipeline(
@@ -39,6 +45,43 @@ class CandidateMatcher:
         )
         self.is_fitted = False
 
+    def _build_artifact_metadata(self, artifact_path: Path | None = None) -> dict[str, Any]:
+        clf= None
+        if hasattr(self.model, "named_steps"):
+            clf = self.model.named_steps.get("clf")
+            return {
+                "model_name": self.MODEL_NAME,
+                "model_version": os.getenv("AI_MODEL_VERSION", "dev"),
+                "schema_version":self.ARTIFACT_SCHEMA_VERSION,
+                "trained_at_utc":datetime.now(timezone.utc).isoformat(),
+                "is_fitted": bool(self.is_fitted),
+                "use_semantic":bool(self.feature_engineer.use_semantic),
+                "feature_columns":list(FEATURE_COLUMNS),
+                "classifier":type(clf).__name__ if clf is not None else type(self.model.__name__),
+                "artifact_path": str(artifact_path) if artifact_path else None, 
+            }
+    @classmethod
+    def read_artifact_metadata(cls, path: str | Path) -> dict[str, Any]:
+        try: 
+            payload = joblib.load(Path(path))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            return dict(metadata)
+        
+        model = payload.get("model")
+        return{
+                "model_name":  cls.MODEL_NAME,
+                "schema_version": "legacy",
+                "is_fitted": "legacy",
+                "use_semantic":bool(payload.get("is_fitted", False)),
+                "feature_columns" : list(payload.get("feature_columns", FEATURE_COLUMNS)),
+                "classifier": type(model).__name__ if model is not None else None,
+                "artifact_path": str(Path(path)),
+        }
     @staticmethod
     def _classification_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5):
         y_pred = (y_prob >= threshold).astype(np.int32)
@@ -216,6 +259,7 @@ class CandidateMatcher:
             "model": self.model,
             "feature_columns": FEATURE_COLUMNS,
             "use_semantic": self.feature_engineer.use_semantic,
+            "metadata" : self._build_artifact_metadata(path),
         }
         joblib.dump(payload, path)
 

@@ -17,7 +17,8 @@ class Settings:
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     DATABASE_URL: str = _get_required_env("DATABASE_URL")
-    AI_MODEL_PATH: str = os.getenv("AI_MODEL_PATH", "artifcats/matcher.joblib")
+    AI_MODEL_PATH: str = os.getenv("AI_MODEL_PATH", "artifacts/matcher.joblib")
     AI_MODEL_AUTOLOAD= bool = os.getenv("AI_MODEL_AUTOLOAD","true").strip().lower() in {"1", "true", "yes","on"}
+    AI_MODEL_VERSION= str = os.getenv("AI_MODEL_VERSION", "dev")
 
 settings = Settings()

@@ -23,7 +23,7 @@ class MatchCandidateOut(BaseModel):
     top_reasons: List[str]
     matched_skills:List[str] = Field(default_factory=list)
     skill_gaps: List[str] = Field(default_factory=list)
-    skill_gap_ratio: float =Field(default=0.0, ge=0.0, le=1.0)
+    skill_gap_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
     learning_recommendations: List[LearningRecommendationOut] = Field(default_factory=list)
 
 class JobMatchResponse(BaseModel):

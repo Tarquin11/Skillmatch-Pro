@@ -1,10 +1,8 @@
 from typing import Callable
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.user import User
