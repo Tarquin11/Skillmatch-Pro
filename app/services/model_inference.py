@@ -4,6 +4,7 @@ import numpy as np
 from app.ai.feature_engineering import FEATURE_COLUMNS
 from app.ai.runtime import get_matcher
 from app.services.matching import calculate_weighted_score
+from app.services.training_recommendation import build_training_recommendations
 
 class ModelInferenceService:
     def rank_candidates(self,*,job_title: str,required_skills: Sequence[str],min_experience: int, employees: Sequence[Any],limit: int, ) -> list[dict[str, Any]]:
@@ -44,6 +45,13 @@ class ModelInferenceService:
             breakdown = self._model_feature_breakdown(matcher, features)
             reasons = self._top_reasons(features, breakdown)
             score = float(pred.get("score_percent", 0.0))
+            employee_skills = self._extract_employee_skills(employee)
+            gap_report = build_training_recommendations(
+                job_title=job_title,
+                required_skills=required_skills,
+                owned_skills=employee_skills,
+                top_k= 3,
+            )
             out.append({
                 "employee_id": int(employee.id),
                 "full_name":self._full_name(employee),
@@ -52,6 +60,10 @@ class ModelInferenceService:
                 "scoring_source": "model",
                 "feature_breakdown": breakdown,
                 "top_reasons": reasons,
+                "matched_skills" : gap_report["matched_skills"],
+                "skill_gaps":gap_report["missing_skills"],
+                "skill_gap_ratio":float(gap_report["skill_gap_ratio"]),
+                "learning_recommendations":gap_report["learning_recommendations"],
             })
             
         return out 
@@ -80,7 +92,13 @@ class ModelInferenceService:
                 "performance_score": float(h.get("performance_score", 0.0)),
             }
             reasons = self._top_reasons(breakdown, breakdown)
-
+            employee_skills = self._extract_employee_skills(employee)
+            gap_report = build_training_recommendations(
+                job_title=job_title,
+                required_skills=required_skills,
+                owned_skills=employee_skills,
+                top_k= 3,
+            )
             out.append(
                 {
                     "employee_id": int(employee.id),
@@ -90,6 +108,10 @@ class ModelInferenceService:
                     "scoring_source": "heuristic",
                     "feature_breakdown": {k: round(v, 4) for k, v in breakdown.items()},
                     "top_reasons": reasons,
+                    "matched_skills" : gap_report["matched_skills"],
+                    "skill_gaps":gap_report["missing_skills"],
+                    "skill_gap_ratio":float(gap_report["skill_gap_ratio"]),
+                    "learning_recommendations":gap_report["learning_recommendations"],
                 }
             )
         return out
@@ -149,3 +171,16 @@ class ModelInferenceService:
         first = (getattr(employee, "first_name", None) or "").strip()
         last = (getattr(employee, "last_name", None) or "").strip()
         return (f"{first} {last}".strip() or "Unknown")
+    
+    def _extract_employee_skills(self,employee: Any) -> list[str]:
+        names: list[str] = []
+        for item in getattr(employee, "skills", []) or []:
+            if hasattr(item, "name") and getattr(item, "name", None):
+                names.append(str(item.name))
+                continue
+            linked_skill = getattr(item, "skill", None)
+            linked_name = getattr(linked_skill,"name", None)
+            if linked_name:
+                names.append(str(linked_name))
+        return names
+

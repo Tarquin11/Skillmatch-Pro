@@ -7,9 +7,9 @@ _matcher: Optional[CandidateMatcher] = None
 def get_matcher() -> Optional[CandidateMatcher]:
     return _matcher
 
-def load_matcher_artifact(pat: str) -> Optional[CandidateMatcher]:
+def load_matcher_artifact(path: str | Path) -> Optional[CandidateMatcher]:
     global _matcher
-    model_path = Path(Path)
+    model_path = Path(path)
     if not model_path.exists():
         _matcher = None
         return None

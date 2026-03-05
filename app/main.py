@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="SkillMatch Pro")
+app = FastAPI(title="SkillMatch Pro", lifespan=lifespan)
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(employees_router, prefix="/employees", tags=["Employees"])
 app.include_router(candidates_router)

@@ -4,6 +4,8 @@ from datetime import date, datetime
 from typing import Any,Iterable
 
 SKILL_SPLIT_RE = re.compile(r"[,\|;/]+")
+NON_ALNUM_SKILL_RE= re.compile(r"[^a-z0-9+.#/\-\s]")
+VERSION_SUFFIX_RE=re.compile(r"(?<=\D)\d+(\.\d+)*$")
 
 PERFORMANCE_MAP = {
     "superior": 1.0,
@@ -52,8 +54,10 @@ def years_between(start: date | None, end: date | None = None) -> float:
 
 
 def normalize_skill_name(skill: Any) -> str:
-    value = to_text(skill).lower()
-    value = re.sub(r"\s+", " ", value)
+    value = to_text(skill).lower().replace("&"," and ")
+    value = NON_ALNUM_SKILL_RE.sub(" ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    value = VERSION_SUFFIX_RE.sub("", value).strip()
     return value
 
 

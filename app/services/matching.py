@@ -3,6 +3,7 @@ import os
 from datetime import date
 from typing import Iterable, Optional, Sequence
 from app.services.embedding_service import compute_semantic_similarity
+from app.ai.preprocessing import normalize_skill_name
 
 
 PERFORMANCE_MAPPING = {
@@ -50,11 +51,10 @@ def _experience_score(employee, min_experience: int = 0) -> float:
 
 
 def _skill_overlap(required_skills: Sequence[str], employee_skills: Sequence[str]) -> float:
-    required_set = {s.strip().lower() for s in required_skills if s and s.strip()}
+    required_set = _normalize_skill_set(required_skills)
     if not required_set:
         return 0.0
-
-    employee_set = {s.strip().lower() for s in employee_skills if s and s.strip()}
+    employee_set = _normalize_skill_set(employee_skills)
     overlap = len(required_set & employee_set)
     return overlap / len(required_set)
 
@@ -157,3 +157,11 @@ def calculate_match_score(
         return result["total"]
 
     return result
+
+def _normalize_skill_set(skills: Sequence[str]) -> set[str]:
+    out: set[str] = set()
+    for raw in skills or []:
+        normalized = normalize_skill_name(raw)
+        if normalized:
+            out.add(normalized)
+    return out
