@@ -17,7 +17,10 @@ def extract_text(file_bytes, filename):
     return ""
     
 def _normalize_text(text: str) -> str:
-    return re.sub(r"\s+", "",(text or "").lower()).strip()
+    normalized = (text or "").lower()
+    normalized = re.sub(r"[\u00a0\t\r\n]+", " ", normalized)
+    normalized = re.sub(r"\s{2,}", " ", normalized)
+    return normalized.strip()
 
 def _tokenize(text: str) -> list[str]:
     return WORD_RE.findall(text)

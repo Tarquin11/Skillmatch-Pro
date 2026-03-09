@@ -46,10 +46,9 @@ class CandidateMatcher:
         self.is_fitted = False
 
     def _build_artifact_metadata(self, artifact_path: Path | None = None) -> dict[str, Any]:
-        clf= None
-        if hasattr(self.model, "named_steps"):
-            clf = self.model.named_steps.get("clf")
-            return {
+        clf= self.model.named_steps.get("clf") if hasattr(self.model, "named_steps") else None
+        classifier_name = type(clf).__name__ if clf is not None else type(self.model).__name__
+        return {
                 "model_name": self.MODEL_NAME,
                 "model_version": os.getenv("AI_MODEL_VERSION", "dev"),
                 "schema_version":self.ARTIFACT_SCHEMA_VERSION,
@@ -75,9 +74,11 @@ class CandidateMatcher:
         model = payload.get("model")
         return{
                 "model_name":  cls.MODEL_NAME,
-                "schema_version": "legacy",
-                "is_fitted": "legacy",
-                "use_semantic":bool(payload.get("is_fitted", False)),
+                "model_version" : "legacy",
+                "schema_version" : "legacy",
+                "trained_at_utc": None, 
+                "is_fitted": bool(payload.get("is_fitted", False)),
+                "use_semantic":bool(payload.get("use_semantic", False)),
                 "feature_columns" : list(payload.get("feature_columns", FEATURE_COLUMNS)),
                 "classifier": type(model).__name__ if model is not None else None,
                 "artifact_path": str(Path(path)),

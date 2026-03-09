@@ -21,7 +21,16 @@ def _load_registry(path: Path) -> list[dict]:
 def main():
     parser = argparse.ArgumentParser(description="Retrain matcher with versioned artifacts")
     parser.add_argument("--input", required=True, help="Training pairs json/jsonl path.")
-    parser.add_argument("--artifacts-dir", default=None, help="Optional model version tag")
+    parser.add_argument(
+        "--artifacts-dir",
+        default="artifacts",
+        help="directory where model artifacts are saved"
+    )
+    parser.add_argument(
+        "--version",
+        default=None,
+        help="optional model version tag(default: UTC timestamp).",
+    )
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--valid-size", type=float, default=0.2)
     parser.add_argument("--no-semantic", action="store_true")
@@ -31,7 +40,7 @@ def main():
     trained_at = datetime.now(timezone.utc)
     version = args.version or trained_at.strftime("%Y%m%d_%H%M%S")
     #artifacts directory and create
-    artifacts_dir= Path(args.artifacts_dir)
+    artifacts_dir= Path(args.artifacts_dir).expanduser()
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     versioned_model = artifacts_dir / f"matcher_{version}.joblib"

@@ -80,3 +80,15 @@ Set env vars first (`DATABASE_URL`, `SECRET_KEY`), then run:
 ```bash
 alembic upgrade head
 
+## Run Locally
+```markdown
+
+Model/version metadata endpoint:
+- `GET /ai/model-info` (auth required)
+
+Retraining process:
+- See `docs/ai_retraining.md`
+
+Run retraining:
+```bash
+python -m app.scripts.retrain_matcher --input artifacts/training_pairs.jsonl --artifacts-dir artifacts

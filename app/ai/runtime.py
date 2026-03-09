@@ -3,22 +3,16 @@ from pathlib import Path
 from typing import Optional , Any
 import logging
 from app.ai.matcher import CandidateMatcher
-
 logger = logging.getLogger(__name__)
-
 _matcher: Optional[CandidateMatcher] = None
 _matcher_metadata: dict[str, Any] = {}
 _loaded_model_path: Path | None = None
-
 def get_matcher() -> Optional[CandidateMatcher]:
     return _matcher
-
 def get_matcher_metadata() -> dict[str, Any]:
     return dict(_matcher_metadata)
-
 def load_matcher_artifact(path: str | Path) -> Optional[CandidateMatcher]:
     global _matcher , _matcher_metadata , _loaded_model_path
-
     model_path = Path(path)
     if not model_path.exists():
         _matcher = None
