@@ -11,3 +11,14 @@ __pycache__/
 data/train_pairs.jsonl
 artifacts/
 
+# Pipeline outputs (large)
+data/raw/
+data/clean/
+data/features/
+data/splits/
+
+# Keep registry + taxonomy
+!data/registry/
+!data/registry/**
+!data/taxonomy/
+!data/taxonomy/**
