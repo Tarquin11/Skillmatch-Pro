@@ -22,3 +22,14 @@ data/splits/
 !data/registry/**
 !data/taxonomy/
 !data/taxonomy/**
+# Pipeline outputs (large)
+data/raw/
+data/clean/
+data/features/
+data/splits/
+
+# Keep registry + taxonomy
+!data/registry/
+!data/registry/**
+!data/taxonomy/
+!data/taxonomy/**
