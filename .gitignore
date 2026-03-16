@@ -33,3 +33,10 @@ data/splits/
 !data/registry/**
 !data/taxonomy/
 !data/taxonomy/**
+
+#data leakage verfification
+
+!data/splits/train.jsonl
+!data/splits/val.jsonl
+!data/splits/test.jsonl
+!data/processed/ranking_pairs.jsonl

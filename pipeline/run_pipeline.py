@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import csv
 import hashlib
@@ -228,6 +227,17 @@ def _split_bucket(value: Any, train_ratio: float, val_ratio: float) -> str:
         return "val"
     return "test"
 
+def _get_group_key(row : dict[str, Any], group_by: str | None) -> Any:
+    if not group_by:
+        return None
+    key = group_by.lower()
+    if key in {"candidate_id","employee_id"}:
+        emp = row.get("employee") or {}
+        return emp.get("id") or row.get("candidate_id") or row.get("employee_id")
+    if key in {"job_id", "query_id"}:
+        job = row.get("id") or row.get("job_id") or row.get("query_id")
+        return job.get("id") or row.get("job_id") or row.get("query_id")
+    return row.get(group_by)
 
 def split_pairs(
     features_path: Path,
@@ -252,7 +262,7 @@ def split_pairs(
 
     try:
         for idx, row in enumerate(_iter_pairs(features_path)):
-            key = row.get(group_by) if group_by else None
+            key = _get_group_key(row, group_by)
             if key is None:
                 roll = rng.random()
                 if roll < train_ratio:
@@ -282,7 +292,7 @@ def main() -> None:
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)
     parser.add_argument("--test-ratio", type=float, default=0.1)
-    parser.add_argument("--group-by", default="query_id")
+    parser.add_argument("--group-by", default="query_id", help="query_id, job_id, candidate_id, employee_id")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--skip-ingest", action="store_true")
     parser.add_argument("--skip-clean", action="store_true")

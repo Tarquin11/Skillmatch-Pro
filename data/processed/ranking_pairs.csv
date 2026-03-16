@@ -1,0 +1,103 @@
+query_id,candidate_id,job_position_name,matched_score,overlap_ratio,title_similarity,missing_required,label,label_type
+JOB_afcd201484,CAND_8a82cc1a5d,Senior Software Engineer,0.85,1.0,0.1,0,1,positive
+JOB_afcd201484,CAND_7f7ff3072c,Senior Software Engineer,,0.0,0.829268,1,0,hard_negative
+JOB_afcd201484,CAND_e351213283,Senior Software Engineer,,0.0,0.727273,1,0,hard_negative
+JOB_afcd201484,CAND_51f34f9244,Senior Software Engineer,,0.0,0.0,1,0,easy_negative
+JOB_afcd201484,CAND_cbc4e4dcb2,Senior Software Engineer,,0.0,0.093023,1,0,easy_negative
+JOB_6461a696bc,CAND_78a196cdd8,Mechanical Designer,0.85,1.0,0.292683,0,1,positive
+JOB_6461a696bc,CAND_76601e23af,Mechanical Designer,0.726666667,0.5,0.416667,1,0,hard_negative
+JOB_6461a696bc,CAND_5ae93e66b8,Mechanical Designer,0.716666667,0.5,0.584615,1,0,hard_negative
+JOB_6461a696bc,CAND_3034d21d82,Mechanical Designer,0.116666667,0.0,0.235294,2,0,easy_negative
+JOB_6461a696bc,CAND_ebbf9c31e7,Mechanical Designer,0.166666667,0.0,0.206897,2,0,easy_negative
+JOB_8acc35069a,CAND_48e54cb6e2,HR Officer,0.88,1.0,0.218182,0,1,positive
+JOB_8acc35069a,CAND_e60b182857,HR Officer,0.183333333,0.0,0.285714,1,0,easy_negative
+JOB_8acc35069a,CAND_cd66d19c55,HR Officer,0.25,0.0,0.266667,1,0,easy_negative
+JOB_4afea1aa30,CAND_106aadbaec,Intern (Generative AI Engineering - 2D/3D Image Generation),0.85,1.0,0.21978,0,1,positive
+JOB_4afea1aa30,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_4afea1aa30,CAND_b27946a62c,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.032258,1,0,easy_negative
+JOB_570261c5c0,CAND_e60b182857,"Full Stack Developer (Python,React js)",0.85,1.0,0.464286,0,1,positive
+JOB_570261c5c0,CAND_51f34f9244,"Full Stack Developer (Python,React js)",,0.0,0.0,1,0,easy_negative
+JOB_570261c5c0,CAND_35145fd098,"Full Stack Developer (Python,React js)",,0.0,0.04878,1,0,easy_negative
+JOB_7bf45c0580,CAND_e60b182857,Senior Software Engineer,0.85,1.0,0.619048,0,1,positive
+JOB_7bf45c0580,CAND_e351213283,Senior Software Engineer,,0.0,0.727273,1,0,hard_negative
+JOB_7bf45c0580,CAND_49236a0554,Senior Software Engineer,,0.0,0.723404,1,0,hard_negative
+JOB_7bf45c0580,CAND_51f34f9244,Senior Software Engineer,,0.0,0.0,1,0,easy_negative
+JOB_7bf45c0580,CAND_cbc4e4dcb2,Senior Software Engineer,,0.0,0.093023,1,0,easy_negative
+JOB_ad590f4432,CAND_a5509c5faf,Machine Learning (ML) Engineer,0.85,1.0,0.454545,0,1,positive
+JOB_ad590f4432,CAND_b685d3a859,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_ad590f4432,CAND_0e5b41ee5e,Machine Learning (ML) Engineer,,0.0,0.769231,1,0,hard_negative
+JOB_ad590f4432,CAND_51f34f9244,Machine Learning (ML) Engineer,,0.0,0.0,1,0,easy_negative
+JOB_ad590f4432,CAND_24ffeda684,Machine Learning (ML) Engineer,,0.0,0.060606,1,0,easy_negative
+JOB_a14f66cf8f,CAND_2bd388692a,"Full Stack Developer (Python,React js)",0.85,1.0,0.25,0,1,positive
+JOB_a14f66cf8f,CAND_51f34f9244,"Full Stack Developer (Python,React js)",,0.0,0.0,1,0,easy_negative
+JOB_a14f66cf8f,CAND_007cb554c3,"Full Stack Developer (Python,React js)",,0.0,0.04878,1,0,easy_negative
+JOB_92ae27a656,CAND_e351213283,Senior Software Engineer,0.783333333,1.0,0.727273,0,1,positive
+JOB_92ae27a656,CAND_1ebead5eb6,Senior Software Engineer,,0.0,0.653846,1,0,hard_negative
+JOB_92ae27a656,CAND_d75105db2e,Senior Software Engineer,,0.0,0.653846,1,0,hard_negative
+JOB_92ae27a656,CAND_51f34f9244,Senior Software Engineer,,0.0,0.0,1,0,easy_negative
+JOB_92ae27a656,CAND_8542ecd9c4,Senior Software Engineer,,0.0,0.111111,1,0,easy_negative
+JOB_faf924d8b3,CAND_e60b182857,Machine Learning (ML) Engineer,0.75,1.0,0.25,0,1,positive
+JOB_faf924d8b3,CAND_f904c6efdc,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_faf924d8b3,CAND_e0bc4d5c14,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_faf924d8b3,CAND_51f34f9244,Machine Learning (ML) Engineer,,0.0,0.0,1,0,easy_negative
+JOB_faf924d8b3,CAND_35145fd098,Machine Learning (ML) Engineer,,0.0,0.060606,1,0,easy_negative
+JOB_baf0e3b582,CAND_8a82cc1a5d,Intern (Generative AI Engineering - 2D/3D Image Generation),0.85,1.0,0.24,0,1,positive
+JOB_baf0e3b582,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_baf0e3b582,CAND_4126dcbb1a,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.032258,1,0,easy_negative
+JOB_31524f9e52,CAND_8ad368a3a0,"Full Stack Developer (Python,React js)",0.85,1.0,0.382979,0,1,positive
+JOB_31524f9e52,CAND_51f34f9244,"Full Stack Developer (Python,React js)",,0.0,0.0,1,0,easy_negative
+JOB_31524f9e52,CAND_35145fd098,"Full Stack Developer (Python,React js)",,0.0,0.04878,1,0,easy_negative
+JOB_6c53731cae,CAND_8a82cc1a5d,"Full Stack Developer (Python,React js)",0.85,1.0,0.111111,0,1,positive
+JOB_6c53731cae,CAND_51f34f9244,"Full Stack Developer (Python,React js)",,0.0,0.0,1,0,easy_negative
+JOB_6c53731cae,CAND_33f5d46cc4,"Full Stack Developer (Python,React js)",,0.0,0.04878,1,0,easy_negative
+JOB_91f711e030,CAND_106aadbaec,"Full Stack Developer (Python,React js)",0.85,1.0,0.2,0,1,positive
+JOB_91f711e030,CAND_51f34f9244,"Full Stack Developer (Python,React js)",,0.0,0.0,1,0,easy_negative
+JOB_91f711e030,CAND_24ffeda684,"Full Stack Developer (Python,React js)",,0.0,0.04878,1,0,easy_negative
+JOB_161c7571fd,CAND_e351213283,Machine Learning (ML) Engineer,0.793333333,1.0,0.48,0,1,positive
+JOB_161c7571fd,CAND_ade04ba2ba,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_161c7571fd,CAND_15a033ed46,Machine Learning (ML) Engineer,,0.0,0.792453,1,0,hard_negative
+JOB_161c7571fd,CAND_51f34f9244,Machine Learning (ML) Engineer,,0.0,0.0,1,0,easy_negative
+JOB_161c7571fd,CAND_24ffeda684,Machine Learning (ML) Engineer,,0.0,0.060606,1,0,easy_negative
+JOB_492bf54d7d,CAND_8ad368a3a0,Senior Software Engineer,0.85,1.0,0.242424,0,1,positive
+JOB_492bf54d7d,CAND_7f7ff3072c,Senior Software Engineer,,0.0,0.829268,1,0,hard_negative
+JOB_492bf54d7d,CAND_e351213283,Senior Software Engineer,,0.0,0.727273,1,0,hard_negative
+JOB_492bf54d7d,CAND_51f34f9244,Senior Software Engineer,,0.0,0.0,1,0,easy_negative
+JOB_492bf54d7d,CAND_cbc4e4dcb2,Senior Software Engineer,,0.0,0.093023,1,0,easy_negative
+JOB_d00deaee37,CAND_8a82cc1a5d,Machine Learning (ML) Engineer,0.85,1.0,0.173913,0,1,positive
+JOB_d00deaee37,CAND_e0bc4d5c14,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_d00deaee37,CAND_ade04ba2ba,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_d00deaee37,CAND_51f34f9244,Machine Learning (ML) Engineer,,0.0,0.0,1,0,easy_negative
+JOB_d00deaee37,CAND_19545d743b,Machine Learning (ML) Engineer,,0.0,0.060606,1,0,easy_negative
+JOB_b844ddb15a,CAND_8a82cc1a5d,Executive/ Sr. Executive -IT,0.85,1.0,0.181818,0,1,positive
+JOB_b844ddb15a,CAND_51f34f9244,Executive/ Sr. Executive -IT,,0.0,0.0,1,0,easy_negative
+JOB_b844ddb15a,CAND_3b0d6b7648,Executive/ Sr. Executive -IT,,0.0,0.051282,1,0,easy_negative
+JOB_fd88e7ba1c,CAND_8ad368a3a0,Intern (Generative AI Engineering - 2D/3D Image Generation),0.85,1.0,0.058824,0,1,positive
+JOB_fd88e7ba1c,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_fd88e7ba1c,CAND_c97d0eb47c,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.032258,1,0,easy_negative
+JOB_f9d210af12,CAND_f43923f83f,Machine Learning (ML) Engineer,0.85,1.0,0.516129,0,1,positive
+JOB_f9d210af12,CAND_f904c6efdc,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_f9d210af12,CAND_e0bc4d5c14,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_f9d210af12,CAND_51f34f9244,Machine Learning (ML) Engineer,,0.0,0.0,1,0,easy_negative
+JOB_f9d210af12,CAND_33f5d46cc4,Machine Learning (ML) Engineer,,0.0,0.060606,1,0,easy_negative
+JOB_b2fa7432e1,CAND_2bd388692a,Intern (Generative AI Engineering - 2D/3D Image Generation),0.816666667,1.0,0.173913,0,1,positive
+JOB_b2fa7432e1,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_b2fa7432e1,CAND_16ed621935,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.057971,1,0,easy_negative
+JOB_f99846bab3,CAND_106aadbaec,Senior Software Engineer,0.816666667,1.0,0.321429,0,1,positive
+JOB_f99846bab3,CAND_a6da62d80a,Senior Software Engineer,,0.0,0.708333,1,0,hard_negative
+JOB_f99846bab3,CAND_e03993e862,Senior Software Engineer,,0.0,0.666667,1,0,hard_negative
+JOB_f99846bab3,CAND_51f34f9244,Senior Software Engineer,,0.0,0.0,1,0,easy_negative
+JOB_f99846bab3,CAND_cbc4e4dcb2,Senior Software Engineer,,0.0,0.093023,1,0,easy_negative
+JOB_e4406d80bb,CAND_f43923f83f,Intern (Generative AI Engineering - 2D/3D Image Generation),0.826666667,1.0,0.417582,0,1,positive
+JOB_e4406d80bb,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_e4406d80bb,CAND_4126dcbb1a,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.032258,1,0,easy_negative
+JOB_46b11bd6fd,CAND_8ad368a3a0,Machine Learning (ML) Engineer,0.85,1.0,0.205128,0,1,positive
+JOB_46b11bd6fd,CAND_ade04ba2ba,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_46b11bd6fd,CAND_f904c6efdc,Machine Learning (ML) Engineer,,0.0,0.909091,1,0,hard_negative
+JOB_46b11bd6fd,CAND_51f34f9244,Machine Learning (ML) Engineer,,0.0,0.0,1,0,easy_negative
+JOB_46b11bd6fd,CAND_4126dcbb1a,Machine Learning (ML) Engineer,,0.0,0.060606,1,0,easy_negative
+JOB_c00763e392,CAND_dba5115197,Intern (Generative AI Engineering - 2D/3D Image Generation),0.85,1.0,0.166667,0,1,positive
+JOB_c00763e392,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_c00763e392,CAND_b27946a62c,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.032258,1,0,easy_negative
+JOB_51b172dc59,CAND_e60b182857,Intern (Generative AI Engineering - 2D/3D Image Generation),0.85,1.0,0.077922,0,1,positive
+JOB_51b172dc59,CAND_51f34f9244,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.0,1,0,easy_negative
+JOB_51b172dc59,CAND_b27946a62c,Intern (Generative AI Engineering - 2D/3D Image Generation),,0.0,0.032258,1,0,easy_negative

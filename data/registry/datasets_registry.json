@@ -1,0 +1,36 @@
+[
+    {
+        "dataset_id":  "AI-Powered Resume Screening (2025)",
+        "source":  "kaggle",
+        "origin":  "https://www.kaggle.com/datasets/mdtalhask/ai-powered-resume-screening-dataset-2025",
+        "license":  "CC BY-SA 4.0",
+        "license_url":  "https://creativecommons.org/licenses/by-sa/4.0/",
+        "usage_rights":  "research",
+        "pii":  "no",
+        "terms_accepted_by":  "",
+        "terms_accepted_at_utc":  "",
+        "ingested_at_utc":  "2026-03-16T12:59:58.709385+00:00",
+        "raw_path":  "data\\raw\\public\\resume_data_for_ranking.csv",
+        "record_count":  0,
+        "sha256":  "31a3b4a40bda419908be9e0702b1d87d766887606a696b8312df742f485bfefe",
+        "schema_version":  "pairs_v1",
+        "notes":  "public CSV source"
+    },
+    {
+        "dataset_id":  "master_resumes",
+        "source":  "HuggingFace",
+        "origin":  "https://huggingface.co/datasets/datasetmaster/resumes",
+        "license":  "MIT",
+        "license_url":  "\u003clicense url\u003e",
+        "usage_rights":  "Student Project",
+        "pii":  "no",
+        "terms_accepted_by":  "",
+        "terms_accepted_at_utc":  "",
+        "ingested_at_utc":  "2026-03-16T13:03:24.168445+00:00",
+        "raw_path":  "data\\raw\\partner\\master_resumes.jsonl",
+        "record_count":  4817,
+        "sha256":  "b8cb2810a5868dc03a6ab4ba49c495316d280996ce28d2ace97be1e0b6bda136",
+        "schema_version":  "pairs_v1",
+        "notes":  "partner JSONL source"
+    }
+]
