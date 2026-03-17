@@ -18,8 +18,8 @@ router = APIRouter(prefix="/candidates", tags=["Candidates"], dependencies=[Depe
     },
 )
 async def upload_cv (file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail={"code": "invalid_file_type", "message": "Seulement Les Fichiers PDF sont supportés !  / Only PDF files are supported ! "},)
+    if not file.filename or not file.filename.lower().endswith((".pdf", ".docx")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail={"code": "invalid_file_type", "message": "Seulement Les Fichiers PDF et DOCX sont supportés !  / Only PDF and DOCX files are supported ! "},)
     try:
         contents = await file.read()
         text = extract_text(contents, file.filename)
