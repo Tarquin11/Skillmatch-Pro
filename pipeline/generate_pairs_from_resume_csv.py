@@ -14,7 +14,6 @@ from typing import Any, Iterable
 LIST_SPLIT_RE = re.compile(r"[,\n;/|]+")
 NON_ALNUM_RE = re.compile(r"[^a-z0-9+.#/\-\s]")
 
-
 def _normalize_text(value: Any) -> str:
     text = str(value or "").strip().lower()
     text = re.sub(r"[\u00a0\t\r\n]+", " ", text)
@@ -159,11 +158,22 @@ def _title_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a_norm, b_norm).ratio()
 
 
+def _extract_year(value: Any) -> str:
+    text = str(value or "")
+    match = re.search(r"(19|20)\d{2}", text)
+    return match.group(0) if match else ""
+
+
 def _pick_first(values: Iterable[str]) -> str:
     for v in values:
         if v:
             return v
     return ""
+
+def _extract_year(value: Any) -> str:
+    text = str(value or "")
+    match = re.search(r"(19|20)\d{2}", text)
+    return match.group(0) if match else ""
 
 
 def main() -> None:
@@ -204,9 +214,15 @@ def main() -> None:
             job_skills_raw = row.get("skills_required") or row.get("related_skils_in_job") or ""
             job_skills = _parse_skills(job_skills_raw)
 
+            time_key = _extract_year(
+                row.get("start_dates") or row.get("passing_years") or row.get("issue_dates")
+            )
+
             candidate_skills = _parse_skills(row.get("skills"))
             overlap, missing = _overlap_ratio(candidate_skills, job_skills, args.skill_fuzzy_threshold)
             required_count = len(job_skills)
+
+            time_key =  _extract_year(row.get("start_dates") or row.get("passing_years") or row.get("issue_dates"))
 
             matched_score = _parse_float(row.get("matched_score"))
             title_similarity = _title_similarity(job_title, _pick_first(_parse_list(row.get("positions") or row.get("role_positions"))))
@@ -273,11 +289,13 @@ def main() -> None:
                 "matched_score": matched_score if matched_score is not None else "",
                 "overlap_ratio": round(overlap, 6),
                 "title_similarity": round(title_similarity, 6),
+                "time_key": time_key,
                 "missing_required": missing,
                 "label": 1 if label_type == "positive" else 0,
                 "label_type": label_type,
                 "employee": employee,
                 "job": job,
+                "time_key": time_key,
             }
 
             groups.setdefault(query_id, []).append(record)
@@ -435,6 +453,7 @@ def main() -> None:
                     {
                         "query_id": rec["query_id"],
                         "label": rec["label"],
+                        "time_key": rec.get("time_key", ""),
                         "employee": rec["employee"],
                         "job": rec["job"],
                     },

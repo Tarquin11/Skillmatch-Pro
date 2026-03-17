@@ -5,6 +5,7 @@ import shutil
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 from app.ai.matcher import CandidateMatcher
 from app.scripts.train_matcher import load_pairs
 
@@ -16,6 +17,13 @@ def _load_registry(path: Path) -> list[dict]:
         return data if isinstance(data, list) else[]
     except Exception:
         return []
+    
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024*1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
     
 
 def main():
@@ -30,6 +38,11 @@ def main():
         "--version",
         default=None,
         help="optional model version tag(default: UTC timestamp).",
+    )
+    parser.add_argument(
+        "--dataset-version",
+        default=None,
+        help="optional dataset version string to store in metrics.",
     )
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--valid-size", type=float, default=0.2)
@@ -73,6 +86,8 @@ def main():
             "artifact_path": str(versioned_model),
         }
     )
+    metrics["dataset_version"] = args.dataset_version or "didnt put yet ! "
+    metrics["dataset_sha256"] = _sha256(Path(args.input))
     versioned_metrics.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     if args.promote_latest:
