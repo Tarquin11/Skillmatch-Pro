@@ -2,11 +2,9 @@ import io
 import re
 from difflib import SequenceMatcher
 from typing import Any, Iterable
-
 import numpy as np
 import pdfplumber
 from docx import Document
-
 from app.ai.preprocessing import normalize_skill_name
 from app.services.embedding_service import EmbeddingService
 
@@ -35,8 +33,11 @@ def extract_text(file_bytes, filename):
     
 def _normalize_text(text: str) -> str:
     normalized = (text or "").lower()
-    normalized = re.sub(r"[\u00a0\t\r\n]+", " ", normalized)
-    normalized = re.sub(r"\s{2,}", " ", normalized)
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("\u00a0", " ").replace("\t", " ")
+    lines = [re.sub(r"[ ]{2,}", " ", line).strip() for line in normalized.split("\n")]
+    normalized = "\n".join(lines)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized.strip()
 
 def _tokenize(text: str) -> list[str]:

@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException , UploadFile, File, Depends, status
 from sqlalchemy.orm import Session
+import io
+import zipfile
 from app.schemas.candidate import CandidateUploadRespose
 from app.schemas.common import ErrorResponse
 from app.services.cv_parser import extract_text, detect_skills , detect_skills_with_confidence
@@ -8,6 +10,26 @@ from app.db.database import get_db
 from app.models.skill import Skill
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"], dependencies=[Depends(get_current_active_user)])
+
+_ALLOWED_MIMES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+def _sniff_cv_mime(file_bytes: bytes) -> str:
+    if not file_bytes:
+        return "application/octet-stream"
+    if file_bytes.startswith(b"%PDF-"):
+        return "application/pdf"
+    if file_bytes[:4] in (b"PK\x03\x04",b"PK\x05\x06",b"PK\x07\x08"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                names = {n.lower() for n in zf.namelist()}
+                if "[content_types].xml" in names and "word/document.xml" in names:
+                    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        except Exception:
+            pass
+        return "application/octet-stream"
 
 @router.post(
     "/upload_cv",
@@ -22,7 +44,21 @@ async def upload_cv (file: UploadFile = File(...), db: Session = Depends(get_db)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail={"code": "invalid_file_type", "message": "Seulement Les Fichiers PDF et DOCX sont supportés !  / Only PDF and DOCX files are supported ! "},)
     try:
         contents = await file.read()
-        text = extract_text(contents, file.filename)
+        sniffed = _sniff_cv_mime(contents)
+        if sniffed not in _ALLOWED_MIMES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "invalid_file_type","message":"Seulement Les Fichiers PDF et DOCX sont supportés !  / Only PDF and DOCX files are supported !"}
+            )
+        if sniffed == "application/pdf":
+            safe_name = file.filename or "cv.pdf"
+            if not safe_name.lower().endswith(".pdf"):
+                safe_name = "cv.pdf"
+        else:
+            safe_name = file.filename or "cv.docx"
+            if not safe_name.lower().endswith(".docx"):
+                safe_name = "cv.docx"
+        text = extract_text(contents, safe_name)
         #no hardcoded skills
         known_skills = [name for(name,) in db.query(Skill.name).all() if name]
         extracted_skills = detect_skills_with_confidence(text, known_skills=known_skills)
