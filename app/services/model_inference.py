@@ -69,28 +69,6 @@ class ModelInferenceService:
         while len(self._PRED_CACHE) > self._CACHE_MAX:
             self._PRED_CACHE.popitem(last=False)
 
-    def _log_inference_metrics(
-        self,
-        *,
-        source: str,
-        job_title: str,
-        total: int,
-        success: int,
-        failed: int,
-        latency_ms: float,
-        batch: bool,
-    ) -> None:
-        logger.info(
-            "ai_inference_metrics source=%s job_title=%s batch=%s total=%d success=%d failed=%d latency_ms=%.2f",
-            source,
-            job_title,
-            batch,
-            total,
-            success,
-            failed,
-            latency_ms,
-        )
-
     def rank_candidates(
         self,
         *,
@@ -175,8 +153,8 @@ class ModelInferenceService:
                     job_payload,
                     batch_size=256,
                 )
-                latency_ms = (perf_counter() - batch_start) * 1000.0
-                self._log_inference_metrics(
+                latency_ms = (perf_counter() - batch_start)*1000.0
+                self._log_inheritance_metrics(
                     source="model",
                     job_title=job_title,
                     total=len(pending),
@@ -187,15 +165,15 @@ class ModelInferenceService:
                 )
             except Exception:
                 latency_ms = (perf_counter() - batch_start) * 1000.0
-                self._log_inference_metrics(
+                self._log_inheritance_metrics(
                     source="model",
                     job_title=job_title,
                     total=len(pending),
                     success=0,
-                    failed=len(pending),
+                    failed=len(pending), 
                     latency_ms=latency_ms,
                     batch=True,
-                )
+                ) 
                 logger.exception(
                     "ai_prediction_failure scope=batch source=model job_title=%s",
                     job_title,
@@ -205,7 +183,7 @@ class ModelInferenceService:
         if pending and preds is None:
             for employee, cache_key in pending:
                 try:
-                    single_start = perf_counter()
+                    single_start =  perf_counter()
                     pred = matcher.predict_score(employee, job_payload)
                     latency_ms = (perf_counter() - single_start) * 1000.0
                     self._log_inference_metrics(
@@ -245,22 +223,12 @@ class ModelInferenceService:
                     out.append(row)
                     self._cache_set(cache_key, row)
                 except Exception:
-                    latency_ms = (perf_counter() - single_start) * 1000.0
-                    self._log_inference_metrics(
-                        source="model",
-                        job_title=job_title,
-                        total=1,
-                        success=0,
-                        failed=1,
-                        latency_ms=latency_ms,
-                        batch=False,
-                    )
                     logger.exception(
                         "ai_prediction_failure scope=employee source=model employee_id=%s job_title=%s",
                         getattr(employee, "id", None),
                         job_title,
                     )
-                    fallback = self._build_minimal_fallback_row(
+                    fallback = self._build_heuristic_row(
                         employee=employee,
                         job_title=job_title,
                         required_skills=required_skills,
@@ -306,7 +274,7 @@ class ModelInferenceService:
                         getattr(employee, "id", None),
                         job_title,
                     )
-                    fallback = self._build_minimal_fallback_row(
+                    fallback = self._build_heuristic_row(
                         employee=employee,
                         job_title=job_title,
                         required_skills=required_skills,
@@ -393,49 +361,6 @@ class ModelInferenceService:
             "scoring_source": scoring_source,
             "feature_breakdown": {k: round(v, 4) for k, v in breakdown.items()},
             "top_reasons": reasons,
-            "matched_skills": gap_report["matched_skills"],
-            "skill_gaps": gap_report["missing_skills"],
-            "skill_gap_ratio": float(gap_report["skill_gap_ratio"]),
-            "learning_recommendations": gap_report["learning_recommendations"],
-        }
-        self._cache_set(cache_key, row)
-        return row
-
-    def _build_minimal_fallback_row(
-        self,
-        *,
-        employee: Any,
-        job_title: str,
-        required_skills: Sequence[str],
-        min_experience: int,
-        scoring_source: str,
-    ) -> dict[str, Any] | None:
-        job_key = self._job_cache_key(job_title, required_skills, min_experience)
-        cache_key = f"{scoring_source}|{job_key}|{self._employee_cache_key(employee)}"
-        cached = self._cache_get(cache_key)
-        if cached:
-            return cached
-
-        gap_report = build_training_recommendations(
-            job_title=job_title,
-            required_skills=required_skills,
-            owned_skills=self._extract_employee_skills(employee),
-            top_k=3,
-        )
-
-        row = {
-            "employee_id": int(employee.id),
-            "full_name": self._full_name(employee),
-            "score": 0.0,
-            "predicted_fit_score": 0.0,
-            "scoring_source": scoring_source,
-            "feature_breakdown": {
-                "skill_overlap": 0.0,
-                "experience_score": 0.0,
-                "semantic_similarity": 0.0,
-                "performance_score": 0.0,
-            },
-            "top_reasons": ["Fallback scoring (model unavailable)."],
             "matched_skills": gap_report["matched_skills"],
             "skill_gaps": gap_report["missing_skills"],
             "skill_gap_ratio": float(gap_report["skill_gap_ratio"]),

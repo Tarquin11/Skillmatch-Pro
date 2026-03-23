@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Optional
-from pydantic import BaseModel, Field , EmailStr, ConfigDict
+from pydantic import BaseModel, Field , EmailStr, ConfigDict, AliasChoices
 
 class EmployeeBase(BaseModel):
     employee_number: Optional[str] = Field(default=None, alias="employeeNumber")
@@ -8,7 +8,7 @@ class EmployeeBase(BaseModel):
     last_name: Optional[str] = None
     full_name: Optional[str] = None
     email: Optional[str] = None
-    department: Optional[str] = Field(default=None, alias="departement")
+    department: Optional[str] = Field(default=None, validation_alias=AliasChoices("department","departement"),serialization_alias="department",)
     position: Optional[str] = None
     performance_score: Optional[str] = None
     hire_date : Optional[date] = None

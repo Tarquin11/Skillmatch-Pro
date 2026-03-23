@@ -1,40 +1,66 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.employee import Employee
 from app.schemas.employee import EmployeeCreate, EmployeeOut, EmployeeUpdate
 from app.api.auth import get_current_active_user, require_roles
 from app.models.user import User
+from app.api.utils import apply_list_query
+from app.schemas.listing import ListQuery
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
+_EMPLOYEE_SORT_FIELDS = {
+    "id": Employee.id,
+    "first_name": Employee.first_name,
+    "last_name": Employee.last_name,
+    "email": Employee.email,
+    "department": Employee.department,
+    "position": Employee.position,
+    "hire_date": Employee.hire_date,
+}
 @router.get("/", response_model=List[EmployeeOut])
 def read_employees(
-    skip: int = 0,
-    limit: int = 20,
+    params: ListQuery = Depends(),
     department: Optional[str] = Query(default=None),
     position: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     query = db.query(Employee)
+    if params.search:
+        term = params.search.strip().lower()
+        query = query.filter(
+            or_(
+                func.lower(func.trim(Employee.first_name)).like(f"%{term}%"),
+                func.lower(func.trim(Employee.last_name)).like(f"%{term}%"),
+                func.lower(func.trim(Employee.email)).like(f"%{term}%"),
+                func.lower(func.trim(Employee.position)).like(f"%{term}%"),
+                func.lower(func.trim(Employee.department)).like(f"%{term}%"),
+            )
+        )
     if department:
         dep = department.strip()
         query = query.filter(func.lower(func.trim(Employee.department)).like(f"%{dep.lower()}%"))
     if position:
         pos = position.strip()
         query = query.filter(func.lower(func.trim(Employee.position)).like(f"%{pos.lower()}%"))
-    return query.offset(skip).limit(limit).all()
 
-
+    return apply_list_query(
+        query,
+        sort_by=params.sort_by,
+        sort_dir=params.sort_dir,
+        sort_map=_EMPLOYEE_SORT_FIELDS,
+        skip=params.skip,
+        limit=params.limit,
+    ).all()
 @router.get("/{employee_id}", response_model=EmployeeOut)
 def get_employee(employee_id: int, db: Session = Depends(get_db)):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found"})
     return employee
-
 
 @router.post("/", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
 def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):

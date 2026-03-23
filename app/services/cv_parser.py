@@ -182,7 +182,7 @@ def _calibrate_confidence(raw_conf : float, source: str, section_weight: float) 
         "exact": 1.0,
         "synonym": 0.95,
         "fuzzy": 0.90,
-        "semantic": 0.92,
+        "semntic":0.92,
         "legacy": 0.88,
     }.get(source_key, 0.92)
 
@@ -305,16 +305,13 @@ def detect_skills_with_confidence(
 
         semantic = semantic_hits.get(canonical)
         if semantic and semantic[0] > best_conf:
-            best_conf = semantic[0]
-            best_source = semantic[1]
-            best_section_weight = semantic[2]
+            best_conf, best_source, best_section_weight = semantic 
 
-        calibrated = _calibrate_confidence(best_conf, best_source, best_section_weight)
-        if calibrated >= min_confidence:
+        if best_conf >= min_confidence:
             hits.append(
                 {
                     "skill": canonical,
-                    "confidence": round(calibrated, 2),
+                    "confidence": round(best_conf, 2),
                     "source": best_source,
                 }
             )

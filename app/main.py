@@ -10,7 +10,7 @@ from app.api.candidates import router as candidates_router
 from app.api.match import router as match_router
 from app.api.jobs import router as jobs_router
 from app.api.skills import router as skills_router
-from app.api.department import router as departements_router
+from app.api.department import router as departments_router
 from app.api.ai import router as ai_router
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,8 @@ app.include_router(candidates_router)
 app.include_router(match_router)
 app.include_router(jobs_router)
 app.include_router(skills_router)
-app.include_router(departements_router)
+app.include_router(departments_router, prefix="/departments", tags=["departments"])
+app.include_router(departments_router, prefix="/departements", tags=["departements"])
 app.include_router(ai_router)
 
 @app.get("/")

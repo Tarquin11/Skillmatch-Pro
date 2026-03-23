@@ -62,7 +62,7 @@ def _skill_overlap(required_skills: Sequence[str], employee_skills: Sequence[str
 def _employee_profile_text(employee, employee_skills: Iterable[str]) -> str:
     parts = [
         str(getattr(employee, "position", "") or ""),
-        str(getattr(employee, "departement", "") or ""),
+        str(getattr(employee, "department", "") or ""),
         " ".join(employee_skills),
     ]
     return " ".join(part for part in parts if part).strip()

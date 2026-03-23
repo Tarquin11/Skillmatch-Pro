@@ -1,5 +1,6 @@
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Query
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.job import JobPost, JobSkill
@@ -10,10 +11,41 @@ from app.models.user import User
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(get_current_active_user)])
 
-@router.get("/", response_model=List[JobOut])
-def list_jobs(db: Session = Depends(get_db)):
-    return db.query(JobPost).order_by(JobPost.id.desc()).all()
+_JOB_SORT_FIELDS = {
+    "id": JobPost.id,
+    "title": JobPost.title,
+    "department": JobPost.department,
+}
 
+@router.get("/", response_model=List[JobOut])
+def list_jobs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(default=None),
+    department: Optional[str] = Query(default=None),
+    sort_by: str = Query("id"),
+    sort_dir: str = Query("desc"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(JobPost)
+
+    if search:
+        term = search.strip().lower()
+        query = query.filter(
+            or_(
+                func.lower(func.trim(JobPost.title)).like(f"%{term}%"),
+                func.lower(func.trim(JobPost.description)).like(f"%{term}%"),
+            )
+        )
+    if department:
+        dep = department.strip().lower()
+        query = query.filter(func.lower(func.trim(JobPost.department)).like(f"%{dep}%"))
+    sort_col = _JOB_SORT_FIELDS.get(sort_by, JobPost.id)
+    if sort_dir.lower() == "asc":
+        query = query.order_by(sort_col.asc())
+    else:
+        query = query.order_by(sort_col.desc())
+    return query.offset(skip).limit(limit).all()
 
 @router.get("/{job_id}", response_model=JobOut)
 def get_job(job_id: int, db: Session = Depends(get_db)):

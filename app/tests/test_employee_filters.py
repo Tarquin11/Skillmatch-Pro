@@ -33,5 +33,5 @@ def test_filter_department_and_position_regression(client, admin_auth):
     rows = r.json()
 
     assert len(rows) >= 1
-    assert all("IT" in (row.get("departement") or row.get("department") or "") for row in rows)
+    assert all("IT" in (row.get("department") or "") for row in rows)
     assert all("support" in (row.get("position") or "").lower() for row in rows)

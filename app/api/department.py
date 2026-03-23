@@ -2,7 +2,6 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
 from app.api.auth import get_current_active_user, require_roles
 from app.db.database import get_db
 from app.models.departement import Departement
@@ -10,42 +9,51 @@ from app.models.user import User
 from app.schemas.departement import DepartementCreate, DepartementOut, DepartementUpdate
 
 
-router = APIRouter(
-    prefix="/departements",
-    tags=["departements"],
-    dependencies=[Depends(get_current_active_user)],
-)
+router = APIRouter(tags=["departments"],dependencies=[Depends(get_current_active_user)],)
 
+_DEPARTMENT_SORT_FIELDS = {
+    "id": Departement.id,
+    "name": Departement.name,
+}
 
 def _normalize_name(value: str) -> str:
     return " ".join(value.split()).strip()
 
-
 @router.get("/", response_model=List[DepartementOut])
-def list_departements(
+def list_departments(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(default=None),
+    sort_by: str = Query("name"),
+    sort_dir: str = Query("asc"),
     db: Session = Depends(get_db),
 ):
     query = db.query(Departement)
     if search:
         term = search.strip().lower()
         query = query.filter(func.lower(func.trim(Departement.name)).like(f"%{term}%"))
-    return query.order_by(Departement.name.asc()).all()
+    sort_col = _DEPARTMENT_SORT_FIELDS.get(sort_by, Departement.name)
+    if sort_dir.lower() == "desc":
+        query = query.order_by(sort_col.desc())
+    else:
+        query = query.order_by(sort_col.asc())
+    return query.offset(skip).limit(limit).all()
 
 
-@router.get("/{departement_id}", response_model=DepartementOut)
-def get_departement(departement_id: int, db: Session = Depends(get_db)):
-    departement = db.get(Departement, departement_id)
+
+@router.get("/{department_id}", response_model=DepartementOut)
+def get_department(department_id: int, db: Session = Depends(get_db)):
+    departement = db.get(Departement, department_id)
     if not departement:
         raise HTTPException(
             status_code=404,
-            detail={"code": "departement_not_found", "message": "Departement not found"},
+            detail={"code": "department_not_found", "message": "Department not found"},
         )
     return departement
 
 
 @router.post("/", response_model=DepartementOut, status_code=status.HTTP_201_CREATED)
-def create_departement(
+def create_department(
     payload: DepartementCreate,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_roles("admin")),
@@ -54,7 +62,7 @@ def create_departement(
     if not name:
         raise HTTPException(
             status_code=422,
-            detail={"code": "invalid_departement_name", "message": "Departement name cannot be empty"},
+            detail={"code": "invalid_department_name", "message": "Department name cannot be empty"},
         )
 
     existing = (
@@ -65,7 +73,7 @@ def create_departement(
     if existing:
         raise HTTPException(
             status_code=409,
-            detail={"code": "departement_already_exists", "message": "Departement already exists"},
+            detail={"code": "department_already_exists", "message": "Department already exists"},
         )
 
     departement = Departement(name=name)
@@ -75,18 +83,18 @@ def create_departement(
     return departement
 
 
-@router.put("/{departement_id}", response_model=DepartementOut)
-def update_departement(
-    departement_id: int,
+@router.put("/{department_id}", response_model=DepartementOut)
+def update_department(
+    department_id: int,
     payload: DepartementUpdate,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_roles("admin")),
 ):
-    departement = db.get(Departement, departement_id)
+    departement = db.get(Departement, department_id)
     if not departement:
         raise HTTPException(
             status_code=404,
-            detail={"code": "departement_not_found", "message": "Departement not found"},
+            detail={"code": "department_not_found", "message": "Department not found"},
         )
 
     updates = payload.model_dump(exclude_unset=True)
@@ -95,21 +103,21 @@ def update_departement(
         if not normalized_name:
             raise HTTPException(
                 status_code=422,
-                detail={"code": "invalid_departement_name", "message": "Departement name cannot be empty"},
+                detail={"code": "invalid_department_name", "message": "Department name cannot be empty"},
             )
 
         conflict = (
             db.query(Departement)
             .filter(
                 func.lower(func.trim(Departement.name)) == normalized_name.lower(),
-                Departement.id != departement_id,
+                Departement.id != department_id,
             )
             .first()
         )
         if conflict:
             raise HTTPException(
                 status_code=409,
-                detail={"code": "departement_already_exists", "message": "Departement already exists"},
+                detail={"code": "department_already_exists", "message": "Department already exists"},
             )
 
         updates["name"] = normalized_name
@@ -122,17 +130,17 @@ def update_departement(
     return departement
 
 
-@router.delete("/{departement_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_departement(
-    departement_id: int,
+@router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def delete_department(
+    department_id: int,
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_roles("admin")),
 ):
-    departement = db.get(Departement, departement_id)
+    departement = db.get(Departement, department_id)
     if not departement:
         raise HTTPException(
             status_code=404,
-            detail={"code": "departement_not_found", "message": "Departement not found"},
+            detail={"code": "department_not_found", "message": "Department not found"},
         )
 
     db.delete(departement)

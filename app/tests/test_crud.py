@@ -62,16 +62,16 @@ def test_skills_crud(client, admin_auth):
 
 
 def test_departements_crud(client, admin_auth):
-    r = client.post("/departements/", headers=admin_auth, json={"name": "QA"})
+    r = client.post("/departments/", headers=admin_auth, json={"name": "QA"})
     assert r.status_code == 201, r.text
     dep_id = r.json()["id"]
 
-    r = client.get(f"/departements/{dep_id}", headers=admin_auth)
+    r = client.get(f"/departments/{dep_id}", headers=admin_auth)
     assert r.status_code == 200
 
-    r = client.put(f"/departements/{dep_id}", headers=admin_auth, json={"name": "Quality Assurance"})
+    r = client.put(f"/departments/{dep_id}", headers=admin_auth, json={"name": "Quality Assurance"})
     assert r.status_code == 200
     assert r.json()["name"] == "Quality Assurance"
 
-    r = client.delete(f"/departements/{dep_id}", headers=admin_auth)
+    r = client.delete(f"/departments/{dep_id}", headers=admin_auth)
     assert r.status_code == 204

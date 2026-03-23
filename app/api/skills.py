@@ -1,5 +1,6 @@
-from typing import List 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.skill import Skill
@@ -11,9 +12,30 @@ from app.models.user import User
 
 router = APIRouter(prefix="/skills", tags=["skills"], dependencies=[Depends(get_current_active_user)])
 
+_SKILL_SORT_FIELDS = {
+    "id": Skill.id,
+    "name": Skill.name,
+}
+
 @router.get("/", response_model=List[SkillOut])
-def list_skills(db: Session = Depends(get_db)):
-    return db.query(Skill).order_by(Skill.name.asc()).all()
+def list_skills(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(default=None),
+    sort_by: str = Query("name"),
+    sort_dir: str = Query("asc"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Skill)
+    if search:
+        term = search.strip().lower()
+        query = query.filter(func.lower(func.trim(Skill.name)).like(f"%{term}%"))
+    sort_col = _SKILL_SORT_FIELDS.get(sort_by, Skill.name)
+    if sort_dir.lower() == "desc":
+        query = query.order_by(sort_col.desc())
+    else:
+        query = query.order_by(sort_col.asc())
+    return query.offset(skip).limit(limit).all()
 
 @router.get("/{skill_id}", response_model=SkillOut)
 def get_skill(skill_id: int, db: Session = Depends(get_db)):
