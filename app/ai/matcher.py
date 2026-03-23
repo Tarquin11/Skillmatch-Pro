@@ -246,6 +246,56 @@ class CandidateMatcher:
             "source": source,
             "features": features,
         }
+    
+    def predict_scores(
+        self,
+        employee_list: Sequence[Any],
+        job_raw: Any,
+        batch_size: int = 256,
+    ) -> list[dict[str, Any]]:
+        if not employee_list:
+            return []
+
+        job = preprocess_job(job_raw)
+
+        if self.feature_engineer.use_semantic:
+            pairs = [{"employee": emp, "job": job} for emp in employee_list]
+            self.feature_engineer.precompute_embeddings(pairs, batch_size=batch_size)
+
+        results: list[dict[str, Any]] = []
+        for start in range(0, len(employee_list), batch_size):
+            batch = list(employee_list[start : start + batch_size])
+            employees = [preprocess_employee(emp) for emp in batch]
+            features_list = [self.feature_engineer.create_features(emp, job) for emp in employees]
+
+            x = np.asarray(
+                [[feat[col] for col in FEATURE_COLUMNS] for feat in features_list],
+                dtype=np.float32,
+            )
+
+            if self.is_fitted:
+                scores = self.model.predict_proba(x)[:, 1]
+                source = "model"
+            else:
+                scores = np.asarray(
+                    [self._heuristic_score(feat) for feat in features_list],
+                    dtype=np.float32,
+                )
+                source = "heuristic"
+
+            for emp, feats, score in zip(employees, features_list, scores):
+                results.append(
+                    {
+                        "employee_id": emp.get("id"),
+                        "score": round(float(score), 6),
+                        "score_percent": round(float(score) * 100, 2),
+                        "source": source,
+                        "features": feats,
+                    }
+                )
+
+        return results
+
 
     def rank_candidates(self, job_raw: Any, employee_list: list[Any], top_k: int = 20) -> list[dict[str, Any]]:
         scored = [self.predict_score(emp, job_raw) for emp in employee_list]

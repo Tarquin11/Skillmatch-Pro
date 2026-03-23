@@ -1,5 +1,6 @@
 import io
 import re
+import math
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 import numpy as np
@@ -171,6 +172,28 @@ def _get_skill_embeddings(known_skills: list[str]) -> tuple[np.ndarray | None, l
     _EMBED_CACHE[cache_key] = (arr, list(known_skills))
     return _EMBED_CACHE[cache_key]
 
+def _calibrate_confidence(raw_conf : float, source: str, section_weight: float) -> float:
+    if raw_conf <= 0:
+        return 0.0
+
+    raw_conf = max(0.001, min(0.999, raw_conf))
+    source_key = (source or "").split(":")[0]
+    source_weight = {
+        "exact": 1.0,
+        "synonym": 0.95,
+        "fuzzy": 0.90,
+        "semantic": 0.92,
+        "legacy": 0.88,
+    }.get(source_key, 0.92)
+
+    sec = max(0.75, min(1.05, section_weight))
+    adjusted = raw_conf * source_weight * sec
+    adjusted = max(0.001, min(0.999, adjusted))
+    temp = 1.15 if source_key in ("fuzzy","semantic") else 1.0
+    logit = math.log(adjusted / (1 - adjusted))
+    calibrated = 1.0 / (1.0 + math.exp(-logit / temp))
+    return max(0.01, min(0.99, calibrated))
+
 def detect_skills_with_confidence(
     text: str,
     known_skills: Iterable[str],
@@ -193,7 +216,7 @@ def detect_skills_with_confidence(
     section_phrases = _extract_section_phrases(sections)
     skill_vectors, skill_names = _get_skill_embeddings(known_list) if use_semantic else (None, [])
 
-    semantic_hits: dict[str, tuple[float, str]] = {}
+    semantic_hits: dict[str, tuple[float, str, float]] = {}
     if use_semantic and skill_vectors is not None and skill_names:
         embedder = _get_embedder()
         if embedder:
@@ -229,7 +252,7 @@ def detect_skills_with_confidence(
                         conf = min(0.92, sim * weight)
                         prev = semantic_hits.get(skill)
                         if prev is None or conf > prev[0]:
-                            semantic_hits[skill] = (conf, f"semantic:{section}")
+                            semantic_hits[skill] = (conf, f"semantic:{section}", weight)
 
     hits: list[dict[str, Any]] = []
     for canonical, meta in index.items():
@@ -237,6 +260,7 @@ def detect_skills_with_confidence(
         aliases = meta["aliases"]
         best_conf = 0.0
         best_source = "fuzzy"
+        best_section_weight = 0.9
 
         for gram in ngrams:
             gram_key = ngram_keys[gram]
@@ -257,6 +281,7 @@ def detect_skills_with_confidence(
             if conf > best_conf:
                 best_conf = conf
                 best_source = source
+                best_section_weight = 0.9
 
         for phrase, section in section_phrases:
             phrase_key = _skill_key(phrase)
@@ -276,17 +301,20 @@ def detect_skills_with_confidence(
             if conf > best_conf:
                 best_conf = conf
                 best_source = source
+                best_section_weight = section_weights.get(section, 0.85)
 
         semantic = semantic_hits.get(canonical)
         if semantic and semantic[0] > best_conf:
             best_conf = semantic[0]
             best_source = semantic[1]
+            best_section_weight = semantic[2]
 
-        if best_conf >= min_confidence:
+        calibrated = _calibrate_confidence(best_conf, best_source, best_section_weight)
+        if calibrated >= min_confidence:
             hits.append(
                 {
                     "skill": canonical,
-                    "confidence": round(best_conf, 2),
+                    "confidence": round(calibrated, 2),
                     "source": best_source,
                 }
             )

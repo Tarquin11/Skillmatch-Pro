@@ -1,16 +1,53 @@
 from __future__ import annotations
 import logging
+from time import time
+from collections import OrderedDict
 from typing import Any, Sequence
 import numpy as np
 from app.ai.feature_engineering import FEATURE_COLUMNS
 from app.ai.runtime import get_matcher
 from app.services.matching import calculate_weighted_score
 from app.services.training_recommendation import build_training_recommendations
+from app.ai.preprocessing import normalize_skill_name
 
 logger = logging.getLogger(__name__)
 
-
 class ModelInferenceService:
+
+    _CACHE_MAX = 2048
+    _CACHE_TTL_SEC = 300.0
+    _PRED_CACHE: "OrderedDict[str, tuple[float, dict[str, Any]]]" = OrderedDict()
+
+    def _job_cache_key(self, job_title: str , required_skills: Sequence[str], min_experience: int) -> str:
+        skills = [normalize_skill_name(s) for s in (required_skills or []) if s]
+        skills_key = ",".join(sorted({s for s in skills if s}))
+        return f"{(job_title or '').strip().lower()}|{min_experience}|{skills_key}" 
+    
+    def _employee_cache_key(self, employee: Any) -> str:
+        emp_id = getattr(employee, "id", None)
+        pos = (getattr(employee, "position", "") or "").strip().lower()
+        exp = getattr(employee, "experience_years", "")
+        skills = [normalize_skill_name(s) for s in self._extract_employee_skills(employee)]
+        skills_key = ",".join(sorted({s for s in skills if s}))
+        return f"id={emp_id}|pos={pos}|exp={exp}|skills={skills_key}"
+
+    def _cache_get(self, key: str) -> dict[str, Any] | None:
+        item = self._PRED_CACHE.get(key)
+        if not item:
+            return None
+        ts, payload = item
+        if time() - ts > self._CACHE_TTL_SEC:
+            self._PRED_CACHE.pop(key, None)
+            return None
+        self._PRED_CACHE.move_to_end(key)
+        return payload
+
+    def _cache_set(self, key: str, payload: dict[str, Any]) -> None:
+        self._PRED_CACHE[key] = (time(), payload)
+        self._PRED_CACHE.move_to_end(key)
+        while len(self._PRED_CACHE) > self._CACHE_MAX:
+            self._PRED_CACHE.popitem(last=False)
+
     def rank_candidates(
         self,
         *,
@@ -73,25 +110,51 @@ class ModelInferenceService:
             "min_experience": min_experience,
         }
 
+        job_key = self._job_cache_key(job_title, required_skills, min_experience)
+
         out: list[dict[str, Any]] = []
+        pending: list[tuple[Any, str]] = []
 
         for employee in employees:
+            cache_key = f"model|{job_key}|{self._employee_cache_key(employee)}"
+            cached = self._cache_get(cache_key)
+            if cached:
+                out.append(cached)
+            else:
+                pending.append((employee, cache_key))
+
+        preds: list[dict[str, Any]] | None = None
+        if pending and hasattr(matcher, "predict_scores"):
             try:
-                pred = matcher.predict_score(employee, job_payload)
-                features = pred.get("features", {}) or {}
-                breakdown = self._model_feature_breakdown(matcher, features)
-                reasons = self._top_reasons(features, breakdown)
-                score = float(pred.get("score_percent", 0.0))
-
-                gap_report = build_training_recommendations(
-                    job_title=job_title,
-                    required_skills=required_skills,
-                    owned_skills=self._extract_employee_skills(employee),
-                    top_k=3,
+                preds = matcher.predict_scores(
+                    [emp for emp, _ in pending],
+                    job_payload,
+                    batch_size=256,
                 )
+            except Exception:
+                logger.exception(
+                    "ai_prediction_failure scope=batch source=model job_title=%s",
+                    job_title,
+                )
+                preds = None
 
-                out.append(
-                    {
+        if pending and preds is None:
+            for employee, cache_key in pending:
+                try:
+                    pred = matcher.predict_score(employee, job_payload)
+                    features = pred.get("features", {}) or {}
+                    breakdown = self._model_feature_breakdown(matcher, features)
+                    reasons = self._top_reasons(features, breakdown)
+                    score = float(pred.get("score_percent", 0.0))
+
+                    gap_report = build_training_recommendations(
+                        job_title=job_title,
+                        required_skills=required_skills,
+                        owned_skills=self._extract_employee_skills(employee),
+                        top_k=3,
+                    )
+
+                    row = {
                         "employee_id": int(employee.id),
                         "full_name": self._full_name(employee),
                         "score": round(score, 2),
@@ -104,22 +167,69 @@ class ModelInferenceService:
                         "skill_gap_ratio": float(gap_report["skill_gap_ratio"]),
                         "learning_recommendations": gap_report["learning_recommendations"],
                     }
-                )
-            except Exception:
-                logger.exception(
-                    "ai_prediction_failure scope=employee source=model employee_id=%s job_title=%s",
-                    getattr(employee, "id", None),
-                    job_title,
-                )
-                fallback = self._build_heuristic_row(
-                    employee=employee,
-                    job_title=job_title,
-                    required_skills=required_skills,
-                    min_experience=min_experience,
-                    scoring_source="heuristic_fallback",
-                )
-                if fallback is not None:
-                    out.append(fallback)
+                    out.append(row)
+                    self._cache_set(cache_key, row)
+                except Exception:
+                    logger.exception(
+                        "ai_prediction_failure scope=employee source=model employee_id=%s job_title=%s",
+                        getattr(employee, "id", None),
+                        job_title,
+                    )
+                    fallback = self._build_heuristic_row(
+                        employee=employee,
+                        job_title=job_title,
+                        required_skills=required_skills,
+                        min_experience=min_experience,
+                        scoring_source="heuristic_fallback",
+                    )
+                    if fallback is not None:
+                        out.append(fallback)
+
+        if preds is not None:
+            for (employee, cache_key), pred in zip(pending, preds):
+                try:
+                    features = pred.get("features", {}) or {}
+                    breakdown = self._model_feature_breakdown(matcher, features)
+                    reasons = self._top_reasons(features, breakdown)
+                    score = float(pred.get("score_percent", 0.0))
+
+                    gap_report = build_training_recommendations(
+                        job_title=job_title,
+                        required_skills=required_skills,
+                        owned_skills=self._extract_employee_skills(employee),
+                        top_k=3,
+                    )
+
+                    row = {
+                        "employee_id": int(employee.id),
+                        "full_name": self._full_name(employee),
+                        "score": round(score, 2),
+                        "predicted_fit_score": round(score, 2),
+                        "scoring_source": "model",
+                        "feature_breakdown": breakdown,
+                        "top_reasons": reasons,
+                        "matched_skills": gap_report["matched_skills"],
+                        "skill_gaps": gap_report["missing_skills"],
+                        "skill_gap_ratio": float(gap_report["skill_gap_ratio"]),
+                        "learning_recommendations": gap_report["learning_recommendations"],
+                    }
+                    out.append(row)
+                    self._cache_set(cache_key, row)
+                except Exception:
+                    logger.exception(
+                        "ai_prediction_failure scope=employee source=model employee_id=%s job_title=%s",
+                        getattr(employee, "id", None),
+                        job_title,
+                    )
+                    fallback = self._build_heuristic_row(
+                        employee=employee,
+                        job_title=job_title,
+                        required_skills=required_skills,
+                        min_experience=min_experience,
+                        scoring_source="heuristic_fallback",
+                    )
+                    if fallback is not None:
+                        out.append(fallback)
 
         return out
 
@@ -153,6 +263,12 @@ class ModelInferenceService:
         min_experience: int,
         scoring_source: str,
     ) -> dict[str, Any] | None:
+        job_key = self._job_cache_key(job_title, required_skills, min_experience)
+        cache_key = f"{scoring_source}|{job_key}|{self._employee_cache_key(employee)}"
+        cached = self._cache_get(cache_key)
+        if cached:
+            return cached
+
         try:
             h = calculate_weighted_score(
                 employee=employee,
@@ -184,7 +300,7 @@ class ModelInferenceService:
             top_k=3,
         )
 
-        return {
+        row = {
             "employee_id": int(employee.id),
             "full_name": self._full_name(employee),
             "score": round(score, 2),
@@ -197,6 +313,8 @@ class ModelInferenceService:
             "skill_gap_ratio": float(gap_report["skill_gap_ratio"]),
             "learning_recommendations": gap_report["learning_recommendations"],
         }
+        self._cache_set(cache_key, row)
+        return row
 
     def _log_prediction_distribution(
         self,
