@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -9,6 +9,7 @@ from app.models.Employee_skill import EmployeeSkill
 from app.schemas.skill import SkillCreate, SkillOut, SkillUpdate, EmployeeSkillOut, EmployeeSkillAssignRequest
 from app.api.auth import get_current_active_user, require_roles
 from app.models.user import User
+from app.api.concurrency import enforce_if_match, set_etag
 
 router = APIRouter(prefix="/skills", tags=["skills"], dependencies=[Depends(get_current_active_user)])
 
@@ -38,10 +39,11 @@ def list_skills(
     return query.offset(skip).limit(limit).all()
 
 @router.get("/{skill_id}", response_model=SkillOut)
-def get_skill(skill_id: int, db: Session = Depends(get_db)):
+def get_skill(skill_id: int, response: Response, db: Session = Depends(get_db)):
     skill = db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail={"code": "skill_not_found", "message": "Skill not found / Compétance pas trouvé "})
+    set_etag(response, skill)
     return skill
 
 
@@ -59,10 +61,12 @@ def create_skill(payload: SkillCreate, db: Session = Depends(get_db), _current_u
 
 
 @router.put("/{skill_id}", response_model=SkillOut)
-def update_skill(skill_id: int, payload: SkillUpdate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def update_skill(skill_id: int, payload: SkillUpdate, response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
     skill = db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail={"code": "skill_not_found", "message": "Skill not found / Compétance pas trouvé "})
+
+    enforce_if_match(skill,if_match)
 
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
@@ -70,6 +74,7 @@ def update_skill(skill_id: int, payload: SkillUpdate, db: Session = Depends(get_
 
     db.commit()
     db.refresh(skill)
+    set_etag(response, skill)
     return skill
 
 

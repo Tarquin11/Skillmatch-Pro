@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, Header
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_active_user, require_roles
@@ -7,7 +7,7 @@ from app.db.database import get_db
 from app.models.departement import Departement
 from app.models.user import User
 from app.schemas.departement import DepartementCreate, DepartementOut, DepartementUpdate
-
+from app.api.concurrency import enforce_if_match, set_etag
 
 router = APIRouter(tags=["departments"],dependencies=[Depends(get_current_active_user)],)
 
@@ -40,13 +40,14 @@ def list_departments(
     return query.offset(skip).limit(limit).all()
 
 @router.get("/{department_id}", response_model=DepartementOut)
-def get_department(department_id: int, db: Session = Depends(get_db)):
+def get_department(department_id: int, response: Response, db: Session = Depends(get_db)):
     departement = db.get(Departement, department_id)
     if not departement:
         raise HTTPException(
             status_code=404,
             detail={"code": "department_not_found", "message": "Department not found"},
         )
+    set_etag(response, departement)
     return departement
 
 @router.post("/", response_model=DepartementOut, status_code=status.HTTP_201_CREATED)
@@ -84,6 +85,8 @@ def create_department(
 def update_department(
     department_id: int,
     payload: DepartementUpdate,
+    response: Response,
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
     db: Session = Depends(get_db),
     _current_user: User = Depends(require_roles("admin")),
 ):
@@ -93,7 +96,7 @@ def update_department(
             status_code=404,
             detail={"code": "department_not_found", "message": "Department not found"},
         )
-
+    enforce_if_match(departement, if_match)
     updates = payload.model_dump(exclude_unset=True)
     if "name" in updates and updates["name"] is not None:
         normalized_name = _normalize_name(updates["name"])
@@ -124,6 +127,7 @@ def update_department(
 
     db.commit()
     db.refresh(departement)
+    set_etag(response, departement)
     return departement
 
 

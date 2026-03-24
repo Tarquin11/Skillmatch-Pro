@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Query, Header
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -7,6 +7,7 @@ from app.models.job import JobPost, JobSkill
 from app.models.skill import Skill
 from app.schemas.job import JobCreate, JobOut, JobSkillRequirementOut, JobSkillRequirementRequest, JobUpdate
 from app.api.auth import get_current_active_user, require_roles
+from app.api.concurrency import enforce_if_match, set_etag
 from app.models.user import User
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(get_current_active_user)])
@@ -48,10 +49,11 @@ def list_jobs(
     return query.offset(skip).limit(limit).all()
 
 @router.get("/{job_id}", response_model=JobOut)
-def get_job(job_id: int, db: Session = Depends(get_db)):
+def get_job(job_id: int, response: Response ,db: Session = Depends(get_db)):
     job = db.get(JobPost, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"code": "job_not_found", "message": "Job not found"})
+    set_etag(response, job)
     return job
 
 

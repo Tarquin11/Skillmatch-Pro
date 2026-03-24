@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, Header
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -9,6 +9,7 @@ from app.api.auth import get_current_active_user, require_roles
 from app.models.user import User
 from app.api.utils import apply_list_query
 from app.schemas.listing import ListQuery
+from app.api.concurrency import enforce_if_match, set_etag
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -56,10 +57,11 @@ def read_employees(
         limit=params.limit,
     ).all()
 @router.get("/{employee_id}", response_model=EmployeeOut)
-def get_employee(employee_id: int, db: Session = Depends(get_db)):
+def get_employee(employee_id: int, response: Response, db: Session = Depends(get_db)):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found"})
+    set_etag(response, employee)
     return employee
 
 @router.post("/", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
@@ -82,17 +84,19 @@ def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), _cur
 
 
 @router.put("/{employee_id}", response_model=EmployeeOut)
-def update_employee(employee_id: int, payload: EmployeeUpdate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def update_employee(employee_id: int, payload: EmployeeUpdate,response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found / Employée Pas trouvé"})
 
+    enforce_if_match(employee, if_match)
     updates = payload.model_dump(exclude_unset=True, by_alias=False)
     for field, value in updates.items():
         setattr(employee, field, value)
 
     db.commit()
     db.refresh(employee)
+    set_etag(response, employee)
     return employee
 
 
