@@ -1,7 +1,8 @@
 from typing import Any, Dict
-from pydantic import BaseModel, Field
+from pydantic import Field
+from app.schemas.common import StrictBaseModel
 
-class AIModelInfoResponse(BaseModel):
+class AIModelInfoResponse(StrictBaseModel):
     model_loaded: bool
     artifact_exists: bool
     model_path: str

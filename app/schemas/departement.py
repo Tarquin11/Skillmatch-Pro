@@ -1,10 +1,11 @@
 from typing import Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
+from app.schemas.common import StrictBaseModel
 
-class DepartementBase(BaseModel):
+class DepartementBase(StrictBaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
 class DepartementCreate(DepartementBase):
     name: str

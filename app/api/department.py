@@ -39,8 +39,6 @@ def list_departments(
         query = query.order_by(sort_col.asc())
     return query.offset(skip).limit(limit).all()
 
-
-
 @router.get("/{department_id}", response_model=DepartementOut)
 def get_department(department_id: int, db: Session = Depends(get_db)):
     departement = db.get(Departement, department_id)
@@ -50,7 +48,6 @@ def get_department(department_id: int, db: Session = Depends(get_db)):
             detail={"code": "department_not_found", "message": "Department not found"},
         )
     return departement
-
 
 @router.post("/", response_model=DepartementOut, status_code=status.HTTP_201_CREATED)
 def create_department(
