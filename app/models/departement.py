@@ -1,7 +1,8 @@
 from sqlalchemy import Column , Integer, String
 from app.db.database import Base
+from app.models.mixins import AuditMixin
 
-class Departement(Base):
+class Departement(AuditMixin, Base):
     __tablename__ = "departements"
 
     id = Column(Integer, primary_key=True, index=True)

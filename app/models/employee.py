@@ -1,8 +1,9 @@
 from sqlalchemy import Column, Date, Float, Index, Integer, String
 from sqlalchemy.orm import relationship, synonym
 from app.db.database import Base
+from app.models.mixins import AuditMixin
 
-class Employee(Base):
+class Employee(AuditMixin, Base):
     __tablename__ = "employees"
 
     # identifients primaires et basiques

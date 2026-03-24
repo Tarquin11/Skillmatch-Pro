@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Text, Float, ForeignKey, CheckConstraint,Index, UniqueConstraint
+from sqlalchemy import CheckConstraint, Column, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship, synonym
 from app.db.database import Base
+from app.models.mixins import AuditMixin
 
-class JobPost(Base):
+class JobPost(AuditMixin, Base):
     __tablename__ = "job_posts"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
@@ -11,7 +12,7 @@ class JobPost(Base):
     required_skills = relationship("JobSkill", back_populates="job")
     departement = synonym("department")
 
-class JobSkill(Base):
+class JobSkill(AuditMixin, Base):
     __tablename__ = "job_skills"
     __table_args__ = (
         UniqueConstraint("job_id", "skill_id", name="uq_job_skills_job_skill"),

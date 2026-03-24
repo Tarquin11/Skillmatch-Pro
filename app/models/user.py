@@ -1,8 +1,9 @@
-from sqlalchemy import Boolean, Column, Integer, String, Index
+from sqlalchemy import Boolean, Column, Index, Integer, String
 from app.db.database import Base
+from app.models.mixins import AuditMixin
 
 
-class User(Base):
+class User(AuditMixin, Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -11,6 +12,6 @@ class User(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     role = Column(String, default="user", nullable=False)
 
-    __tableargs__ = (
+    __table_args__ = (
         Index("ix_users_role", role),
     )
