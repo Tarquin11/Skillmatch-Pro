@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String
+from sqlalchemy import Boolean, Column, Integer, String, Index
 from app.db.database import Base
 
 
@@ -10,3 +10,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     role = Column(String, default="user", nullable=False)
+
+    __tableargs__ = (
+        Index("ix_users_role", role),
+    )

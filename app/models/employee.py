@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, Float, Integer, String
+from sqlalchemy import Column, Date, Float, Index, Integer, String
 from sqlalchemy.orm import relationship, synonym
 from app.db.database import Base
 
@@ -46,7 +46,12 @@ class Employee(Base):
     recruitment_source = Column("recruitement_source", String, nullable=True)
     skills = relationship("EmployeeSkill", back_populates="employee", cascade="all, delete-orphan")
 
-    # compagnie de synonymes pour les champs avec des noms différents dans la base de données
+    __table_args__ = (
+        Index("ix_employees_departement", department),
+        Index("ix_employees_position", position),
+    )
+
+    # compagnie de synonymes pour les champs avec des noms differents dans la base de donnees
     Employee_number = synonym("employee_number")
     Governorate = synonym("governorate")
     departement = synonym("department")
