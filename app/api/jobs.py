@@ -67,10 +67,12 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db), _current_user:
 
 
 @router.put("/{job_id}", response_model=JobOut)
-def update_job(job_id: int, payload: JobUpdate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def update_job(job_id: int, payload: JobUpdate,response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
     job = db.get(JobPost, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"code": "job_not_found", "message": "Job not found"})
+    
+    enforce_if_match(job, if_match)
 
     updates = payload.model_dump(exclude_unset=True, by_alias=False)
     for field, value in updates.items():
@@ -78,6 +80,7 @@ def update_job(job_id: int, payload: JobUpdate, db: Session = Depends(get_db), _
 
     db.commit()
     db.refresh(job)
+    set_etag(response, job)
     return job
 
 
