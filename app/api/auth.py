@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserResponse
 from app.services import auth_service
+from app.core.rbac import roles_for_policy
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -71,3 +72,17 @@ def require_roles(*allowed_roles: str) -> Callable:
 @router.get("/me", response_model=UserResponse)
 def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
+
+def require_policy(policy: str) -> Callable:
+    allowed_roles = roles_for_policy(policy)
+
+    def policy_checker(current_user: User = Depends(get_current_active_user)) -> User:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": "insufficient_permissions", "message": "Insufficient permissions"},
+            )
+        return current_user
+
+    return policy_checker
+

@@ -6,9 +6,10 @@ from app.db.database import get_db
 from app.models.job import JobPost, JobSkill
 from app.models.skill import Skill
 from app.schemas.job import JobCreate, JobOut, JobSkillRequirementOut, JobSkillRequirementRequest, JobUpdate
-from app.api.auth import get_current_active_user, require_roles
+from app.api.auth import get_current_active_user, require_policy
 from app.api.concurrency import enforce_if_match, set_etag
 from app.models.user import User
+from app.core.rbac import Policy
 
 router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(get_current_active_user)])
 
@@ -58,7 +59,7 @@ def get_job(job_id: int, response: Response ,db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=JobOut, status_code=status.HTTP_201_CREATED)
-def create_job(payload: JobCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def create_job(payload: JobCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.JOB_WRITE))):
     job = JobPost(**payload.model_dump(exclude_unset=True, by_alias=False))
     db.add(job)
     db.commit()
@@ -67,7 +68,7 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db), _current_user:
 
 
 @router.put("/{job_id}", response_model=JobOut)
-def update_job(job_id: int, payload: JobUpdate,response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def update_job(job_id: int, payload: JobUpdate,response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.JOB_WRITE))):
     job = db.get(JobPost, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"code": "job_not_found", "message": "Job not found"})
@@ -85,7 +86,7 @@ def update_job(job_id: int, payload: JobUpdate,response: Response,if_match: Opti
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_job(job_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def delete_job(job_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.JOB_WRITE))):
     job = db.get(JobPost, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"code": "job_not_found", "message": "Job not found"})
@@ -110,7 +111,7 @@ def list_job_skill_requirements(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{job_id}/skills", response_model=JobSkillRequirementOut)
-def upsert_job_skill_requirement(job_id: int,payload: JobSkillRequirementRequest,db: Session = Depends(get_db),_current_user: User = Depends(require_roles("admin"))):
+def upsert_job_skill_requirement(job_id: int,payload: JobSkillRequirementRequest,db: Session = Depends(get_db),_current_user: User = Depends(require_policy(Policy.JOB_SKILL_WRITE))):
     job = db.get(JobPost, job_id)
     if not job:
         raise HTTPException(status_code=404, detail={"code": "job_not_found", "message": "Job not found"})
@@ -150,7 +151,7 @@ def upsert_job_skill_requirement(job_id: int,payload: JobSkillRequirementRequest
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def remove_job_skill_requirement(job_id: int, skill_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def remove_job_skill_requirement(job_id: int, skill_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.JOB_SKILL_WRITE))):
     requirement = (
         db.query(JobSkill)
         .filter(

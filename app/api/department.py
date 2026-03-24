@@ -2,12 +2,13 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, Header
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from app.api.auth import get_current_active_user, require_roles
+from app.api.auth import get_current_active_user, require_policy
 from app.db.database import get_db
 from app.models.departement import Departement
 from app.models.user import User
 from app.schemas.departement import DepartementCreate, DepartementOut, DepartementUpdate
 from app.api.concurrency import enforce_if_match, set_etag
+from app.core.rbac import Policy
 
 router = APIRouter(tags=["departments"],dependencies=[Depends(get_current_active_user)],)
 
@@ -54,7 +55,7 @@ def get_department(department_id: int, response: Response, db: Session = Depends
 def create_department(
     payload: DepartementCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_roles("admin")),
+    _current_user: User = Depends(require_policy(Policy.DEPARTMENT_WRITE)),
 ):
     name = _normalize_name(payload.name)
     if not name:
@@ -88,7 +89,7 @@ def update_department(
     response: Response,
     if_match: Optional[str] = Header(default=None, alias="If-Match"),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_roles("admin")),
+    _current_user: User = Depends(require_policy(Policy.DEPARTMENT_WRITE)),
 ):
     departement = db.get(Departement, department_id)
     if not departement:
@@ -135,7 +136,7 @@ def update_department(
 def delete_department(
     department_id: int,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(require_roles("admin")),
+    _current_user: User = Depends(require_policy(Policy.DEPARTMENT_WRITE)),
 ):
     departement = db.get(Departement, department_id)
     if not departement:

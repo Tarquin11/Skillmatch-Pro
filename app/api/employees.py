@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.employee import Employee
 from app.schemas.employee import EmployeeCreate, EmployeeOut, EmployeeUpdate
-from app.api.auth import get_current_active_user, require_roles
+from app.api.auth import get_current_active_user, require_policy
 from app.models.user import User
 from app.api.utils import apply_list_query
 from app.schemas.listing import ListQuery
 from app.api.concurrency import enforce_if_match, set_etag
+from app.core.rbac import Policy
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -65,7 +66,7 @@ def get_employee(employee_id: int, response: Response, db: Session = Depends(get
     return employee
 
 @router.post("/", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
-def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.EMPLOYEE_WRITE))):
     data = payload.model_dump(by_alias=False)
 
     existing = db.query(Employee).filter(Employee.employee_number == data["employee_number"]).first()
@@ -84,7 +85,7 @@ def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db), _cur
 
 
 @router.put("/{employee_id}", response_model=EmployeeOut)
-def update_employee(employee_id: int, payload: EmployeeUpdate,response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def update_employee(employee_id: int, payload: EmployeeUpdate,response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.EMPLOYEE_WRITE))):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found / Employée Pas trouvé"})
@@ -101,7 +102,7 @@ def update_employee(employee_id: int, payload: EmployeeUpdate,response: Response
 
 
 @router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_employee(employee_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def delete_employee(employee_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.EMPLOYEE_WRITE))):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found / Employée Pas trouvé"})

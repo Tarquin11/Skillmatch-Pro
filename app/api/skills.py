@@ -7,9 +7,10 @@ from app.models.skill import Skill
 from app.models.employee import Employee
 from app.models.Employee_skill import EmployeeSkill
 from app.schemas.skill import SkillCreate, SkillOut, SkillUpdate, EmployeeSkillOut, EmployeeSkillAssignRequest
-from app.api.auth import get_current_active_user, require_roles
+from app.api.auth import get_current_active_user, require_policy
 from app.models.user import User
 from app.api.concurrency import enforce_if_match, set_etag
+from app.core.rbac import Policy
 
 router = APIRouter(prefix="/skills", tags=["skills"], dependencies=[Depends(get_current_active_user)])
 
@@ -48,7 +49,7 @@ def get_skill(skill_id: int, response: Response, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=SkillOut, status_code=status.HTTP_201_CREATED)
-def create_skill(payload: SkillCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def create_skill(payload: SkillCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.SKILL_WRITE))):
     existing = db.query(Skill).filter(Skill.name == payload.name).first()
     if existing:
         raise HTTPException(status_code=409, detail={"code": "skill_already_exists", "message": "Skill already exists"})
@@ -61,7 +62,7 @@ def create_skill(payload: SkillCreate, db: Session = Depends(get_db), _current_u
 
 
 @router.put("/{skill_id}", response_model=SkillOut)
-def update_skill(skill_id: int, payload: SkillUpdate, response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def update_skill(skill_id: int, payload: SkillUpdate, response: Response,if_match: Optional[str] = Header(default=None, alias="If-Match"), db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.SKILL_WRITE))):
     skill = db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail={"code": "skill_not_found", "message": "Skill not found / Compétance pas trouvé "})
@@ -79,7 +80,7 @@ def update_skill(skill_id: int, payload: SkillUpdate, response: Response,if_matc
 
 
 @router.delete("/{skill_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_skill(skill_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def delete_skill(skill_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.SKILL_WRITE))):
     skill = db.get(Skill, skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail={"code": "skill_not_found", "message": "Skill not found / Compétance pas trouvé "})
@@ -90,7 +91,7 @@ def delete_skill(skill_id: int, db: Session = Depends(get_db), _current_user: Us
 
 
 @router.post("/employees/{employee_id}", response_model=EmployeeSkillOut)
-def assign_skill_to_employee(employee_id: int,payload: EmployeeSkillAssignRequest,db: Session = Depends(get_db),_current_user: User = Depends(require_roles("admin"))):
+def assign_skill_to_employee(employee_id: int,payload: EmployeeSkillAssignRequest,db: Session = Depends(get_db),_current_user: User = Depends(require_policy(Policy.EMPLOYEE_SKILL_WRITE))):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found"})
@@ -127,7 +128,7 @@ def assign_skill_to_employee(employee_id: int,payload: EmployeeSkillAssignReques
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def unassign_skill_from_employee(employee_id: int,skill_id: int,db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
+def unassign_skill_from_employee(employee_id: int,skill_id: int,db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.EMPLOYEE_SKILL_WRITE))):
     link = (
         db.query(EmployeeSkill)
         .filter(
