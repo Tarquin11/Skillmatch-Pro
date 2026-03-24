@@ -5,12 +5,14 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models.employee import Employee
 from app.schemas.employee import EmployeeCreate, EmployeeOut, EmployeeUpdate
-from app.api.auth import get_current_active_user, require_policy
+from app.api.auth import get_current_active_user, require_roles
 from app.models.user import User
 from app.api.utils import apply_list_query
 from app.schemas.listing import ListQuery
 from app.api.concurrency import enforce_if_match, set_etag
+from app.api.auth import get_current_active_user, require_policy
 from app.core.rbac import Policy
+
 
 router = APIRouter(dependencies=[Depends(get_current_active_user)])
 
@@ -102,7 +104,7 @@ def update_employee(employee_id: int, payload: EmployeeUpdate,response: Response
 
 
 @router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_employee(employee_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.EMPLOYEE_WRITE))):
+def delete_employee(employee_id: int, db: Session = Depends(get_db), _current_user: User = Depends(require_roles("admin"))):
     employee = db.get(Employee, employee_id)
     if not employee:
         raise HTTPException(status_code=404, detail={"code": "employee_not_found", "message": "Employee not found / Employée Pas trouvé"})

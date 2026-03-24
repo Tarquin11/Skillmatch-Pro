@@ -19,4 +19,8 @@ class UserResponse(StrictBaseModel):
 class Token(StrictBaseModel):
     access_token: str
     token_type: str
-    
+    expires_in: int
+    refresh_token: str
+
+class TokenRefreshRequest(StrictBaseModel):
+    refresh_token: str
