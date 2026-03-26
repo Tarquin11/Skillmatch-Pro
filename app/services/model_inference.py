@@ -250,6 +250,8 @@ class ModelInferenceService:
                         "full_name": self._full_name(employee),
                         "score": round(score, 2),
                         "predicted_fit_score": round(score, 2),
+                        "score_raw": float(score),
+                        "predicted_fit_score_raw": float(score),
                         "scoring_source": "model",
                         "feature_breakdown": breakdown,
                         "top_reasons": reasons,
@@ -296,6 +298,8 @@ class ModelInferenceService:
                         "full_name": self._full_name(employee),
                         "score": round(score, 2),
                         "predicted_fit_score": round(score, 2),
+                        "score_raw": float(score),
+                        "predicted_fit_score_raw": float(score),
                         "scoring_source": "model",
                         "feature_breakdown": breakdown,
                         "top_reasons": reasons,
@@ -396,6 +400,8 @@ class ModelInferenceService:
             "full_name": self._full_name(employee),
             "score": round(score, 2),
             "predicted_fit_score": round(score, 2),
+            "score_raw": float(score),
+            "predicted_fit_score_raw": float(score),
             "scoring_source": scoring_source,
             "feature_breakdown": {k: round(v, 4) for k, v in breakdown.items()},
             "top_reasons": reasons,
@@ -534,7 +540,15 @@ class ModelInferenceService:
     def _build_monitoring_frame(self, rows: Sequence[dict[str, Any]]) -> pd.DataFrame:
         out_rows: list[dict[str, Any]] = []
         for row in rows:
+<<<<<<< HEAD
             score = self._normalize_score_01(row.get("predicted_fit_score", row.get("score", 0.0)))
+=======
+            raw_score = row.get(
+                "predicted_fit_score_raw",
+                row.get("score_raw", row.get("predicted_fit_score", row.get("score", 0.0))),
+            )
+            score = self._normalize_score_01(raw_score)
+>>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
             label = self._extract_optional_label(row)
             out_rows.append(
                 {

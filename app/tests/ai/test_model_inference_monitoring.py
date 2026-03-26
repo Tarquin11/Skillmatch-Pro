@@ -1,6 +1,8 @@
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from app.services.model_inference import ModelInferenceService
 
 
@@ -74,3 +76,19 @@ def test_logs_prediction_failures(monkeypatch, caplog):
 
     assert len(rows) == 1
     assert any("ai_prediction_failure" in rec.message for rec in caplog.records)
+
+
+def test_monitoring_frame_prefers_raw_scores():
+    service = ModelInferenceService()
+    rows = [
+        {
+            "predicted_fit_score": 100.0,
+            "predicted_fit_score_raw": 83.4567,
+            "scoring_source": "model",
+        }
+    ]
+
+    df = service._build_monitoring_frame(rows)
+    assert len(df) == 1
+    # raw score should be used (83.4567% -> 0.834567), not rounded 100% score
+    assert float(df.iloc[0]["predicted_score"]) == pytest.approx(0.834567, abs=1e-9)

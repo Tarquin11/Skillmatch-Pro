@@ -26,6 +26,56 @@ def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
+<<<<<<< HEAD
+=======
+def _quality_stats(scores: pd.Series | list[float]) -> dict[str, float]:
+    clean = pd.to_numeric(pd.Series(scores), errors="coerce").dropna()
+    if clean.empty:
+        return {
+            "score_min": 0.0,
+            "score_max": 0.0,
+            "score_mean": 0.0,
+            "score_stddev": 0.0,
+            "unique_scores": 0.0,
+            "dominant_score_ratio": 1.0,
+        }
+    unique_scores = int(clean.nunique(dropna=True))
+    dominant_ratio = float(clean.value_counts(normalize=True, dropna=True).max())
+    return {
+        "score_min": float(clean.min()),
+        "score_max": float(clean.max()),
+        "score_mean": float(clean.mean()),
+        "score_stddev": float(clean.std(ddof=0)),
+        "unique_scores": float(unique_scores),
+        "dominant_score_ratio": dominant_ratio,
+    }
+
+
+def _validate_quality(
+    stats: dict[str, float],
+    *,
+    min_stddev: float,
+    min_unique_scores: int,
+    max_dominant_ratio: float,
+) -> None:
+    if stats["score_stddev"] < float(min_stddev):
+        raise ValueError(
+            f"Baseline quality failed: stddev={stats['score_stddev']:.6f} < min_stddev={float(min_stddev):.6f}. "
+            "Scores are saturated; collect fresher/diverse traffic."
+        )
+    if int(stats["unique_scores"]) < int(min_unique_scores):
+        raise ValueError(
+            f"Baseline quality failed: unique_scores={int(stats['unique_scores'])} < min_unique_scores={int(min_unique_scores)}. "
+            "Scores do not have enough diversity."
+        )
+    if stats["dominant_score_ratio"] > float(max_dominant_ratio):
+        raise ValueError(
+            f"Baseline quality failed: dominant_score_ratio={stats['dominant_score_ratio']:.6f} > max_dominant_ratio={float(max_dominant_ratio):.6f}. "
+            "A single score value dominates baseline traffic."
+        )
+
+
+>>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build reference_predictions.csv from recent real traffic monitoring rows."
@@ -36,6 +86,12 @@ def main() -> None:
     parser.add_argument("--min-rows", type=int, default=1000)
     parser.add_argument("--max-rows", type=int, default=200000)
     parser.add_argument("--job-title", default=None, help="Optional exact job_title filter.")
+<<<<<<< HEAD
+=======
+    parser.add_argument("--min-stddev", type=float, default=0.01)
+    parser.add_argument("--min-unique-scores", type=int, default=50)
+    parser.add_argument("--max-dominant-score-ratio", type=float, default=0.995)
+>>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
     args = parser.parse_args()
 
     source = Path(args.source)
@@ -89,6 +145,16 @@ def main() -> None:
             f"Not enough rows for baseline: {len(selected)} < min_rows={args.min_rows}. "
             "Run traffic longer or lower --min-rows."
         )
+<<<<<<< HEAD
+=======
+    stats = _quality_stats(selected["predicted_score"])
+    _validate_quality(
+        stats,
+        min_stddev=float(args.min_stddev),
+        min_unique_scores=int(args.min_unique_scores),
+        max_dominant_ratio=float(args.max_dominant_score_ratio),
+    )
+>>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     selected.to_csv(out, index=False)
@@ -100,10 +166,24 @@ def main() -> None:
         "rows_written": int(len(selected)),
         "days_window": int(args.days),
         "job_title_filter": args.job_title,
+<<<<<<< HEAD
         "score_min": float(selected["predicted_score"].min()),
         "score_max": float(selected["predicted_score"].max()),
         "score_mean": float(selected["predicted_score"].mean()),
         "score_stddev": float(selected["predicted_score"].std(ddof=0)),
+=======
+        "score_min": stats["score_min"],
+        "score_max": stats["score_max"],
+        "score_mean": stats["score_mean"],
+        "score_stddev": stats["score_stddev"],
+        "unique_scores": int(stats["unique_scores"]),
+        "dominant_score_ratio": stats["dominant_score_ratio"],
+        "quality_gates": {
+            "min_stddev": float(args.min_stddev),
+            "min_unique_scores": int(args.min_unique_scores),
+            "max_dominant_score_ratio": float(args.max_dominant_score_ratio),
+        },
+>>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
     }
     print(json.dumps(payload, indent=2))
 
