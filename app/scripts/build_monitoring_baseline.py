@@ -26,8 +26,6 @@ def _pick_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-<<<<<<< HEAD
-=======
 def _quality_stats(scores: pd.Series | list[float]) -> dict[str, float]:
     clean = pd.to_numeric(pd.Series(scores), errors="coerce").dropna()
     if clean.empty:
@@ -39,6 +37,7 @@ def _quality_stats(scores: pd.Series | list[float]) -> dict[str, float]:
             "unique_scores": 0.0,
             "dominant_score_ratio": 1.0,
         }
+
     unique_scores = int(clean.nunique(dropna=True))
     dominant_ratio = float(clean.value_counts(normalize=True, dropna=True).max())
     return {
@@ -75,7 +74,6 @@ def _validate_quality(
         )
 
 
->>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build reference_predictions.csv from recent real traffic monitoring rows."
@@ -86,12 +84,9 @@ def main() -> None:
     parser.add_argument("--min-rows", type=int, default=1000)
     parser.add_argument("--max-rows", type=int, default=200000)
     parser.add_argument("--job-title", default=None, help="Optional exact job_title filter.")
-<<<<<<< HEAD
-=======
     parser.add_argument("--min-stddev", type=float, default=0.01)
     parser.add_argument("--min-unique-scores", type=int, default=50)
     parser.add_argument("--max-dominant-score-ratio", type=float, default=0.995)
->>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
     args = parser.parse_args()
 
     source = Path(args.source)
@@ -103,7 +98,7 @@ def main() -> None:
     if df.empty:
         raise ValueError(f"Monitoring source file is empty: {source}")
 
-    score_col = _pick_column(df, ["predicted_score", "predicted_fit_score", "score"])
+    score_col = _pick_column(df, ["predicted_score", "predicted_fit_score_raw", "score_raw", "predicted_fit_score", "score"])
     if score_col is None:
         raise ValueError("Source file is missing score column (expected predicted_score).")
 
@@ -145,8 +140,7 @@ def main() -> None:
             f"Not enough rows for baseline: {len(selected)} < min_rows={args.min_rows}. "
             "Run traffic longer or lower --min-rows."
         )
-<<<<<<< HEAD
-=======
+
     stats = _quality_stats(selected["predicted_score"])
     _validate_quality(
         stats,
@@ -154,7 +148,6 @@ def main() -> None:
         min_unique_scores=int(args.min_unique_scores),
         max_dominant_ratio=float(args.max_dominant_score_ratio),
     )
->>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     selected.to_csv(out, index=False)
@@ -166,12 +159,6 @@ def main() -> None:
         "rows_written": int(len(selected)),
         "days_window": int(args.days),
         "job_title_filter": args.job_title,
-<<<<<<< HEAD
-        "score_min": float(selected["predicted_score"].min()),
-        "score_max": float(selected["predicted_score"].max()),
-        "score_mean": float(selected["predicted_score"].mean()),
-        "score_stddev": float(selected["predicted_score"].std(ddof=0)),
-=======
         "score_min": stats["score_min"],
         "score_max": stats["score_max"],
         "score_mean": stats["score_mean"],
@@ -183,7 +170,6 @@ def main() -> None:
             "min_unique_scores": int(args.min_unique_scores),
             "max_dominant_score_ratio": float(args.max_dominant_score_ratio),
         },
->>>>>>> c094481 (Improve monitoring baseline quality gates and raw-score drift logging)
     }
     print(json.dumps(payload, indent=2))
 
