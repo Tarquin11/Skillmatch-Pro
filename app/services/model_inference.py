@@ -1,9 +1,15 @@
 from __future__ import annotations
+import os
+import csv
+import json
 import logging
+from pathlib import Path
+from datetime import datetime, timezone
 from time import time, perf_counter
 from collections import OrderedDict
 from typing import Any, Sequence
 import numpy as np
+import pandas as pd
 from app.ai.feature_engineering import FEATURE_COLUMNS
 from app.ai.runtime import get_matcher
 from app.services.matching import calculate_weighted_score
@@ -17,8 +23,36 @@ class ModelInferenceService:
     _CACHE_MAX = 2048
     _CACHE_TTL_SEC = 300.0
     _PRED_CACHE: "OrderedDict[str, tuple[float, dict[str, Any]]]" = OrderedDict()
+    _DRIFT_MONITORING_ENABLED = os.getenv(
+        "AI_DRIFT_MONITORING_ENABLED",
+        os.getenv("AI_EVIDENTLY_ENABLED", "true"),
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    _DRIFT_MIN_ROWS = int(
+        os.getenv(
+            "AI_DRIFT_MIN_ROWS",
+            os.getenv("AI_EVIDENTLY_MIN_ROWS", "30"),
+        )
+    )
+    _DRIFT_BASELINE_PATH = Path(
+        os.getenv(
+            "AI_DRIFT_BASELINE_PATH",
+            os.getenv("AI_EVIDENTLY_BASELINE_PATH", "artifacts/monitoring/reference_predictions.csv"),
+        )
+    )
+    _WHYLOGS_REPORTS_DIR = Path(
+        os.getenv("AI_WHYLOGS_REPORTS_DIR", "artifacts/monitoring/whylogs")
+    )
+    _MONITORING_EVENTS_PATH = Path(
+        os.getenv("AI_MONITORING_EVENTS_PATH", "artifacts/monitoring/current_predictions.csv")
+    )
+    _DRIFT_EVENTS_PATH = Path(
+        os.getenv("AI_DRIFT_EVENTS_PATH", "artifacts/monitoring/drift_metrics.jsonl")
+    )
+    _CALIBRATION_BINS = int(os.getenv("AI_CALIBRATION_BINS", "10"))
+    _CALIBRATION_WARNING_MEAN_GT = float(os.getenv("AI_CALIBRATION_WARNING_MEAN_GT", "0.95"))
+    _CALIBRATION_WARNING_STD_LT = float(os.getenv("AI_CALIBRATION_WARNING_STD_LT", "0.03"))
 
-    def _log_inheritance_metrics(
+    def _log_inference_metrics(
             self,
             *,
             source: str,
@@ -30,7 +64,7 @@ class ModelInferenceService:
             batch: bool,
     ) -> None:
         logger.info(
-            "ai_inference_metrics source=%s job_title=%s batch=%s total=%d success=%d failed=%d latency_mas=%.2f",
+            "ai_inference_metrics source=%s job_title=%s batch=%s total=%d success=%d failed=%d latency_ms=%.2f",
             source,
             job_title,
             batch,
@@ -114,6 +148,10 @@ class ModelInferenceService:
             required_skills=required_skills,
             rows=ranked,
         )
+        self._log_prediction_and_calibration_drift(
+            job_title=job_title,
+            rows=ranked,
+        )
         return ranked[:limit]
 
     def _rank_with_model(
@@ -154,7 +192,7 @@ class ModelInferenceService:
                     batch_size=256,
                 )
                 latency_ms = (perf_counter() - batch_start)*1000.0
-                self._log_inheritance_metrics(
+                self._log_inference_metrics(
                     source="model",
                     job_title=job_title,
                     total=len(pending),
@@ -165,7 +203,7 @@ class ModelInferenceService:
                 )
             except Exception:
                 latency_ms = (perf_counter() - batch_start) * 1000.0
-                self._log_inheritance_metrics(
+                self._log_inference_metrics(
                     source="model",
                     job_title=job_title,
                     total=len(pending),
@@ -419,6 +457,322 @@ class ModelInferenceService:
             bins,
             source_counts,
         )
+
+    def _log_prediction_and_calibration_drift(
+        self,
+        *,
+        job_title: str,
+        rows: Sequence[dict[str, Any]],
+    ) -> None:
+        if not self._DRIFT_MONITORING_ENABLED:
+            return
+
+        current_df = self._build_monitoring_frame(rows)
+        if current_df.empty:
+            logger.info("ai_drift_monitoring_skipped reason=no_scores job_title=%s", job_title)
+            return
+        self._append_current_monitoring_rows(job_title=job_title, current_df=current_df)
+        calibration_warning = self._log_calibration_warning(job_title=job_title, current_df=current_df)
+
+        if len(current_df) < self._DRIFT_MIN_ROWS:
+            logger.info(
+                "ai_drift_monitoring_skipped reason=insufficient_rows job_title=%s current=%d min_required=%d calibration_warning=%s",
+                job_title,
+                len(current_df),
+                self._DRIFT_MIN_ROWS,
+                calibration_warning,
+            )
+            return
+
+        reference_df = self._load_reference_monitoring_frame()
+        if reference_df is None or reference_df.empty:
+            logger.warning(
+                "ai_drift_monitoring_skipped reason=missing_reference baseline_path=%s",
+                self._DRIFT_BASELINE_PATH,
+            )
+            return
+
+        current_scores = current_df["predicted_score"].to_numpy(dtype=np.float64)
+        reference_scores = reference_df["predicted_score"].to_numpy(dtype=np.float64)
+        score_psi = self._population_stability_index(reference_scores, current_scores, bins=10)
+
+        ref_ece = self._expected_calibration_error(reference_df)
+        cur_ece = self._expected_calibration_error(current_df)
+        calibration_drift = None
+        if not np.isnan(ref_ece) and not np.isnan(cur_ece):
+            calibration_drift = float(cur_ece - ref_ece)
+
+        report_path = self._write_whylogs_profile(
+            current_df=current_df,
+            job_title=job_title,
+        )
+        self._append_drift_event(
+            job_title=job_title,
+            reference_rows=len(reference_df),
+            current_rows=len(current_df),
+            score_psi=score_psi,
+            ref_ece=ref_ece,
+            cur_ece=cur_ece,
+            calibration_drift=calibration_drift,
+            calibration_warning=calibration_warning,
+            whylogs_profile=report_path,
+        )
+
+        logger.info(
+            "ai_drift_metrics job_title=%s reference_rows=%d current_rows=%d score_psi=%.6f ref_ece=%s cur_ece=%s calibration_drift=%s calibration_warning=%s whylogs_profile=%s",
+            job_title,
+            len(reference_df),
+            len(current_df),
+            score_psi,
+            "nan" if np.isnan(ref_ece) else f"{ref_ece:.6f}",
+            "nan" if np.isnan(cur_ece) else f"{cur_ece:.6f}",
+            "nan" if calibration_drift is None else f"{calibration_drift:.6f}",
+            calibration_warning,
+            report_path or "none",
+        )
+
+    def _build_monitoring_frame(self, rows: Sequence[dict[str, Any]]) -> pd.DataFrame:
+        out_rows: list[dict[str, Any]] = []
+        for row in rows:
+            score = self._normalize_score_01(row.get("predicted_fit_score", row.get("score", 0.0)))
+            label = self._extract_optional_label(row)
+            out_rows.append(
+                {
+                    "predicted_score": score,
+                    "scoring_source": str(row.get("scoring_source", "unknown")),
+                    "actual_label": label,
+                }
+            )
+        df = pd.DataFrame(out_rows)
+        if df.empty:
+            return df
+        df["predicted_score"] = pd.to_numeric(df["predicted_score"], errors="coerce").fillna(0.0)
+        df["predicted_score"] = df["predicted_score"].clip(0.0, 1.0)
+        return df
+
+    def _load_reference_monitoring_frame(self) -> pd.DataFrame | None:
+        path = self._DRIFT_BASELINE_PATH
+        if not path.exists():
+            return None
+
+        try:
+            suffix = path.suffix.lower()
+            if suffix == ".csv":
+                ref = pd.read_csv(path)
+            elif suffix == ".parquet":
+                ref = pd.read_parquet(path)
+            elif suffix in {".jsonl", ".ndjson"}:
+                ref = pd.read_json(path, lines=True)
+            else:
+                logger.warning("ai_drift_reference_unsupported suffix=%s path=%s", suffix, path)
+                return None
+        except Exception:
+            logger.exception("ai_drift_reference_load_failure path=%s", path)
+            return None
+
+        if "predicted_score" not in ref.columns and "predicted_fit_score" in ref.columns:
+            ref["predicted_score"] = ref["predicted_fit_score"]
+        if "predicted_score" not in ref.columns and "score" in ref.columns:
+            ref["predicted_score"] = ref["score"]
+        if "predicted_score" not in ref.columns:
+            logger.warning("ai_drift_reference_missing_column path=%s column=predicted_score", path)
+            return None
+
+        ref_df = pd.DataFrame(
+            {
+                "predicted_score": pd.to_numeric(ref["predicted_score"], errors="coerce"),
+                "scoring_source": ref.get("scoring_source", "reference"),
+                "actual_label": ref.get("actual_label", ref.get("label")),
+            }
+        )
+        ref_df = ref_df.dropna(subset=["predicted_score"]).copy()
+        if ref_df.empty:
+            return None
+        ref_df["predicted_score"] = ref_df["predicted_score"].map(self._normalize_score_01).clip(0.0, 1.0)
+        ref_df["actual_label"] = ref_df["actual_label"].map(self._to_binary_label)
+        return ref_df
+
+    def _write_whylogs_profile(
+        self,
+        *,
+        current_df: pd.DataFrame,
+        job_title: str,
+    ) -> str | None:
+        try:
+            # whylogs 1.x still references np.unicode_ which was removed in NumPy 2.x.
+            if not hasattr(np, "unicode_"):
+                np.unicode_ = np.str_
+            import whylogs as why
+        except Exception:
+            logger.warning("ai_whylogs_unavailable package=whylogs")
+            return None
+
+        try:
+            self._WHYLOGS_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            safe_title = (job_title or "unknown").strip().lower().replace(" ", "_")[:64] or "unknown"
+            out_path = self._WHYLOGS_REPORTS_DIR / f"profile_{safe_title}_{stamp}.bin"
+
+            # Persist current traffic only; reference stays in baseline artifact.
+            profile_df = current_df[["predicted_score"]].copy()
+            profile = why.log(pandas=profile_df).profile()
+            profile.view().writer("local").write(dest=str(out_path))
+            return str(out_path)
+        except Exception:
+            logger.exception("ai_whylogs_write_failure")
+            return None
+
+    def _append_current_monitoring_rows(self, *, job_title: str, current_df: pd.DataFrame) -> None:
+        path = self._MONITORING_EVENTS_PATH
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_header = not path.exists() or path.stat().st_size == 0
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with path.open("a", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "scored_at_utc",
+                        "job_title",
+                        "predicted_score",
+                        "actual_label",
+                        "scoring_source",
+                    ],
+                )
+                if write_header:
+                    writer.writeheader()
+                for row in current_df.itertuples(index=False):
+                    writer.writerow(
+                        {
+                            "scored_at_utc": stamp,
+                            "job_title": (job_title or "").strip(),
+                            "predicted_score": float(getattr(row, "predicted_score", 0.0)),
+                            "actual_label": getattr(row, "actual_label", np.nan),
+                            "scoring_source": str(getattr(row, "scoring_source", "unknown")),
+                        }
+                    )
+        except Exception:
+            logger.exception("ai_monitoring_rows_persist_failure path=%s", path)
+
+    def _log_calibration_warning(self, *, job_title: str, current_df: pd.DataFrame) -> bool:
+        scores = current_df["predicted_score"].to_numpy(dtype=np.float64)
+        if scores.size == 0:
+            return False
+        mean_weighted = float(np.mean(scores))
+        stddev_weighted = float(np.std(scores))
+        warning = (mean_weighted > self._CALIBRATION_WARNING_MEAN_GT) or (
+            stddev_weighted < self._CALIBRATION_WARNING_STD_LT
+        )
+        if warning:
+            logger.warning(
+                "ai_calibration_warning job_title=%s mean_weighted=%.6f stddev_weighted=%.6f mean_threshold=%.6f std_threshold=%.6f",
+                job_title,
+                mean_weighted,
+                stddev_weighted,
+                self._CALIBRATION_WARNING_MEAN_GT,
+                self._CALIBRATION_WARNING_STD_LT,
+            )
+        return warning
+
+    def _append_drift_event(
+        self,
+        *,
+        job_title: str,
+        reference_rows: int,
+        current_rows: int,
+        score_psi: float,
+        ref_ece: float,
+        cur_ece: float,
+        calibration_drift: float | None,
+        calibration_warning: bool,
+        whylogs_profile: str | None,
+    ) -> None:
+        path = self._DRIFT_EVENTS_PATH
+        payload = {
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "job_title": (job_title or "").strip(),
+            "reference_rows": int(reference_rows),
+            "current_rows": int(current_rows),
+            "score_psi": None if np.isnan(score_psi) else float(score_psi),
+            "ref_ece": None if np.isnan(ref_ece) else float(ref_ece),
+            "cur_ece": None if np.isnan(cur_ece) else float(cur_ece),
+            "calibration_drift": None if calibration_drift is None else float(calibration_drift),
+            "calibration_warning": bool(calibration_warning),
+            "whylogs_profile": whylogs_profile,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        except Exception:
+            logger.exception("ai_drift_event_persist_failure path=%s", path)
+
+    def _normalize_score_01(self, value: Any) -> float:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if score > 1.0:
+            score = score / 100.0
+        return float(min(1.0, max(0.0, score)))
+
+    def _extract_optional_label(self, row: dict[str, Any]) -> float | np.floating[Any] | None:
+        for key in ("actual_label", "label", "outcome", "is_match"):
+            if key in row:
+                return self._to_binary_label(row.get(key))
+        return None
+
+    def _to_binary_label(self, value: Any) -> float | np.floating[Any]:
+        if value is None:
+            return np.nan
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return 1.0 if float(value) >= 1.0 else 0.0
+        if isinstance(value, str):
+            raw = value.strip().lower()
+            if raw in {"1", "true", "yes", "y", "positive", "match"}:
+                return 1.0
+            if raw in {"0", "false", "no", "n", "negative", "no_match"}:
+                return 0.0
+        return np.nan
+
+    def _population_stability_index(self, reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
+        if reference.size == 0 or current.size == 0:
+            return float("nan")
+        edges = np.linspace(0.0, 1.0, bins + 1)
+        ref_hist, _ = np.histogram(reference, bins=edges)
+        cur_hist, _ = np.histogram(current, bins=edges)
+        ref_ratio = ref_hist / max(ref_hist.sum(), 1)
+        cur_ratio = cur_hist / max(cur_hist.sum(), 1)
+        eps = 1e-9
+        ref_ratio = np.clip(ref_ratio, eps, None)
+        cur_ratio = np.clip(cur_ratio, eps, None)
+        return float(np.sum((cur_ratio - ref_ratio) * np.log(cur_ratio / ref_ratio)))
+
+    def _expected_calibration_error(self, df: pd.DataFrame) -> float:
+        if "actual_label" not in df.columns:
+            return float("nan")
+        valid = df.dropna(subset=["actual_label"]).copy()
+        if valid.empty:
+            return float("nan")
+
+        probs = valid["predicted_score"].to_numpy(dtype=np.float64)
+        labels = valid["actual_label"].to_numpy(dtype=np.float64)
+        edges = np.linspace(0.0, 1.0, self._CALIBRATION_BINS + 1)
+        ece = 0.0
+        total = len(probs)
+        for start, end in zip(edges[:-1], edges[1:]):
+            if end >= 1.0:
+                mask = (probs >= start) & (probs <= end)
+            else:
+                mask = (probs >= start) & (probs < end)
+            if not np.any(mask):
+                continue
+            bin_probs = probs[mask]
+            bin_labels = labels[mask]
+            ece += (bin_probs.size / total) * abs(float(np.mean(bin_probs)) - float(np.mean(bin_labels)))
+        return float(ece)
 
     def _model_feature_breakdown(self, matcher: Any, features: dict[str, float]) -> dict[str, float]:
         vector = np.asarray([float(features.get(c, 0.0)) for c in FEATURE_COLUMNS], dtype=np.float32)
