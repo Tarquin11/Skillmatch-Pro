@@ -1,44 +1,48 @@
 from __future__ import annotations
-import os
 import csv
 import json
 import logging
-from pathlib import Path
-from datetime import datetime, timezone
-from time import time, perf_counter
+import os
 from collections import OrderedDict
+from datetime import datetime, timezone
+from pathlib import Path
+from time import perf_counter, time
 from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 from app.ai.feature_engineering import FEATURE_COLUMNS
+from app.ai.preprocessing import normalize_skill_name
 from app.ai.runtime import get_matcher
+from app.core.structured_log import EVENT_AI_FALLBACK_USED,EVENT_AI_PREDICTION_FAILURE,REASON_FALLBACK_USED,REASON_MODEL_FAIL,log_structured_event
 from app.services.matching import calculate_weighted_score
 from app.services.training_recommendation import build_training_recommendations
-from app.ai.preprocessing import normalize_skill_name
 
 logger = logging.getLogger(__name__)
 
 class ModelInferenceService:
-
     _CACHE_MAX = 2048
     _CACHE_TTL_SEC = 300.0
     _PRED_CACHE: "OrderedDict[str, tuple[float, dict[str, Any]]]" = OrderedDict()
+
     _DRIFT_MONITORING_ENABLED = os.getenv(
         "AI_DRIFT_MONITORING_ENABLED",
         os.getenv("AI_EVIDENTLY_ENABLED", "true"),
     ).strip().lower() in {"1", "true", "yes", "on"}
+
     _DRIFT_MIN_ROWS = int(
         os.getenv(
             "AI_DRIFT_MIN_ROWS",
             os.getenv("AI_EVIDENTLY_MIN_ROWS", "30"),
         )
     )
+
     _DRIFT_BASELINE_PATH = Path(
         os.getenv(
             "AI_DRIFT_BASELINE_PATH",
             os.getenv("AI_EVIDENTLY_BASELINE_PATH", "artifacts/monitoring/reference_predictions.csv"),
         )
     )
+
     _WHYLOGS_REPORTS_DIR = Path(
         os.getenv("AI_WHYLOGS_REPORTS_DIR", "artifacts/monitoring/whylogs")
     )
@@ -48,20 +52,21 @@ class ModelInferenceService:
     _DRIFT_EVENTS_PATH = Path(
         os.getenv("AI_DRIFT_EVENTS_PATH", "artifacts/monitoring/drift_metrics.jsonl")
     )
+
     _CALIBRATION_BINS = int(os.getenv("AI_CALIBRATION_BINS", "10"))
     _CALIBRATION_WARNING_MEAN_GT = float(os.getenv("AI_CALIBRATION_WARNING_MEAN_GT", "0.95"))
     _CALIBRATION_WARNING_STD_LT = float(os.getenv("AI_CALIBRATION_WARNING_STD_LT", "0.03"))
 
     def _log_inference_metrics(
-            self,
-            *,
-            source: str,
-            job_title: str,
-            total: int,
-            success: int,
-            failed: int,
-            latency_ms: float,
-            batch: bool,
+        self,
+        *,
+        source: str,
+        job_title: str,
+        total: int,
+        success: int,
+        failed: int,
+        latency_ms: float,
+        batch: bool,
     ) -> None:
         logger.info(
             "ai_inference_metrics source=%s job_title=%s batch=%s total=%d success=%d failed=%d latency_ms=%.2f",
@@ -73,11 +78,53 @@ class ModelInferenceService:
             failed,
             latency_ms,
         )
-    def _job_cache_key(self, job_title: str , required_skills: Sequence[str], min_experience: int) -> str:
+
+    def _log_structured_failure(
+        self,
+        *,
+        reason: str,
+        stage: str,
+        source: str,
+        job_title: str,
+        employee_id: int | None = None,
+    ) -> None:
+        log_structured_event(
+            logger,
+            level=logging.ERROR,
+            event=EVENT_AI_PREDICTION_FAILURE,
+            reason=reason,
+            stage=stage,
+            source=source,
+            job_title=job_title,
+            employee_id=employee_id,
+        )
+
+    def _log_structured_fallback(
+        self,
+        *,
+        stage: str,
+        fallback_source: str,
+        job_title: str,
+        employee_id: int | None = None,
+        details: str | None = None,
+    ) -> None:
+        log_structured_event(
+            logger,
+            level=logging.WARNING,
+            event=EVENT_AI_FALLBACK_USED,
+            reason=REASON_FALLBACK_USED,
+            stage=stage,
+            fallback_source=fallback_source,
+            job_title=job_title,
+            employee_id=employee_id,
+            details=details,
+        )
+
+    def _job_cache_key(self, job_title: str, required_skills: Sequence[str], min_experience: int) -> str:
         skills = [normalize_skill_name(s) for s in (required_skills or []) if s]
         skills_key = ",".join(sorted({s for s in skills if s}))
-        return f"{(job_title or '').strip().lower()}|{min_experience}|{skills_key}" 
-    
+        return f"{(job_title or '').strip().lower()}|{min_experience}|{skills_key}"
+
     def _employee_cache_key(self, employee: Any) -> str:
         emp_id = getattr(employee, "id", None)
         pos = (getattr(employee, "position", "") or "").strip().lower()
@@ -124,9 +171,21 @@ class ModelInferenceService:
                     employees=employees,
                 )
             except Exception:
+                self._log_structured_failure(
+                    reason=REASON_MODEL_FAIL,
+                    stage="rank_candidates_batch",
+                    source="model",
+                    job_title=job_title,
+                )
                 logger.exception(
                     "ai_prediction_failure scope=batch source=model job_title=%s",
                     job_title,
+                )
+                self._log_structured_fallback(
+                    stage="rank_candidates_batch",
+                    fallback_source="heuristic",
+                    job_title=job_title,
+                    details="model_batch_failed",
                 )
                 ranked = self._rank_with_heuristic(
                     job_title=job_title,
@@ -135,6 +194,12 @@ class ModelInferenceService:
                     employees=employees,
                 )
         else:
+            self._log_structured_fallback(
+                stage="rank_candidates_entry",
+                fallback_source="heuristic",
+                job_title=job_title,
+                details="matcher_unavailable_or_unfitted",
+            )
             ranked = self._rank_with_heuristic(
                 job_title=job_title,
                 required_skills=required_skills,
@@ -143,6 +208,7 @@ class ModelInferenceService:
             )
 
         ranked.sort(key=lambda x: x["predicted_fit_score"], reverse=True)
+
         self._log_prediction_distribution(
             job_title=job_title,
             required_skills=required_skills,
@@ -191,7 +257,7 @@ class ModelInferenceService:
                     job_payload,
                     batch_size=256,
                 )
-                latency_ms = (perf_counter() - batch_start)*1000.0
+                latency_ms = (perf_counter() - batch_start) * 1000.0
                 self._log_inference_metrics(
                     source="model",
                     job_title=job_title,
@@ -208,10 +274,16 @@ class ModelInferenceService:
                     job_title=job_title,
                     total=len(pending),
                     success=0,
-                    failed=len(pending), 
+                    failed=len(pending),
                     latency_ms=latency_ms,
                     batch=True,
-                ) 
+                )
+                self._log_structured_failure(
+                    reason=REASON_MODEL_FAIL,
+                    stage="predict_scores_batch",
+                    source="model",
+                    job_title=job_title,
+                )
                 logger.exception(
                     "ai_prediction_failure scope=batch source=model job_title=%s",
                     job_title,
@@ -221,7 +293,7 @@ class ModelInferenceService:
         if pending and preds is None:
             for employee, cache_key in pending:
                 try:
-                    single_start =  perf_counter()
+                    single_start = perf_counter()
                     pred = matcher.predict_score(employee, job_payload)
                     latency_ms = (perf_counter() - single_start) * 1000.0
                     self._log_inference_metrics(
@@ -233,6 +305,7 @@ class ModelInferenceService:
                         latency_ms=latency_ms,
                         batch=False,
                     )
+
                     features = pred.get("features", {}) or {}
                     breakdown = self._model_feature_breakdown(matcher, features)
                     reasons = self._top_reasons(features, breakdown)
@@ -262,10 +335,19 @@ class ModelInferenceService:
                     }
                     out.append(row)
                     self._cache_set(cache_key, row)
+
                 except Exception:
+                    emp_id = getattr(employee, "id", None)
+                    self._log_structured_failure(
+                        reason=REASON_MODEL_FAIL,
+                        stage="predict_score_single",
+                        source="model",
+                        job_title=job_title,
+                        employee_id=None if emp_id is None else int(emp_id),
+                    )
                     logger.exception(
                         "ai_prediction_failure scope=employee source=model employee_id=%s job_title=%s",
-                        getattr(employee, "id", None),
+                        emp_id,
                         job_title,
                     )
                     fallback = self._build_heuristic_row(
@@ -276,6 +358,13 @@ class ModelInferenceService:
                         scoring_source="heuristic_fallback",
                     )
                     if fallback is not None:
+                        self._log_structured_fallback(
+                            stage="predict_score_single",
+                            fallback_source="heuristic",
+                            job_title=job_title,
+                            employee_id=int(fallback["employee_id"]),
+                            details="model_single_failed",
+                        )
                         out.append(fallback)
 
         if preds is not None:
@@ -310,10 +399,19 @@ class ModelInferenceService:
                     }
                     out.append(row)
                     self._cache_set(cache_key, row)
+
                 except Exception:
+                    emp_id = getattr(employee, "id", None)
+                    self._log_structured_failure(
+                        reason=REASON_MODEL_FAIL,
+                        stage="predict_scores_row",
+                        source="model",
+                        job_title=job_title,
+                        employee_id=None if emp_id is None else int(emp_id),
+                    )
                     logger.exception(
                         "ai_prediction_failure scope=employee source=model employee_id=%s job_title=%s",
-                        getattr(employee, "id", None),
+                        emp_id,
                         job_title,
                     )
                     fallback = self._build_heuristic_row(
@@ -324,6 +422,13 @@ class ModelInferenceService:
                         scoring_source="heuristic_fallback",
                     )
                     if fallback is not None:
+                        self._log_structured_fallback(
+                            stage="predict_scores_row",
+                            fallback_source="heuristic",
+                            job_title=job_title,
+                            employee_id=int(fallback["employee_id"]),
+                            details="model_row_parse_or_feature_failure",
+                        )
                         out.append(fallback)
 
         return out
@@ -477,6 +582,7 @@ class ModelInferenceService:
         if current_df.empty:
             logger.info("ai_drift_monitoring_skipped reason=no_scores job_title=%s", job_title)
             return
+
         self._append_current_monitoring_rows(job_title=job_title, current_df=current_df)
         calibration_warning = self._log_calibration_warning(job_title=job_title, current_df=current_df)
 
@@ -553,9 +659,11 @@ class ModelInferenceService:
                     "actual_label": label,
                 }
             )
+
         df = pd.DataFrame(out_rows)
         if df.empty:
             return df
+
         df["predicted_score"] = pd.to_numeric(df["predicted_score"], errors="coerce").fillna(0.0)
         df["predicted_score"] = df["predicted_score"].clip(0.0, 1.0)
         return df
@@ -595,9 +703,11 @@ class ModelInferenceService:
                 "actual_label": ref.get("actual_label", ref.get("label")),
             }
         )
+
         ref_df = ref_df.dropna(subset=["predicted_score"]).copy()
         if ref_df.empty:
             return None
+
         ref_df["predicted_score"] = ref_df["predicted_score"].map(self._normalize_score_01).clip(0.0, 1.0)
         ref_df["actual_label"] = ref_df["actual_label"].map(self._to_binary_label)
         return ref_df
@@ -609,7 +719,6 @@ class ModelInferenceService:
         job_title: str,
     ) -> str | None:
         try:
-            # whylogs 1.x still references np.unicode_ which was removed in NumPy 2.x.
             if not hasattr(np, "unicode_"):
                 np.unicode_ = np.str_
             import whylogs as why
@@ -623,7 +732,6 @@ class ModelInferenceService:
             safe_title = (job_title or "unknown").strip().lower().replace(" ", "_")[:64] or "unknown"
             out_path = self._WHYLOGS_REPORTS_DIR / f"profile_{safe_title}_{stamp}.bin"
 
-            # Persist current traffic only; reference stays in baseline artifact.
             profile_df = current_df[["predicted_score"]].copy()
             profile = why.log(pandas=profile_df).profile()
             profile.view().writer("local").write(dest=str(out_path))
@@ -668,11 +776,13 @@ class ModelInferenceService:
         scores = current_df["predicted_score"].to_numpy(dtype=np.float64)
         if scores.size == 0:
             return False
+
         mean_weighted = float(np.mean(scores))
         stddev_weighted = float(np.std(scores))
         warning = (mean_weighted > self._CALIBRATION_WARNING_MEAN_GT) or (
             stddev_weighted < self._CALIBRATION_WARNING_STD_LT
         )
+
         if warning:
             logger.warning(
                 "ai_calibration_warning job_title=%s mean_weighted=%.6f stddev_weighted=%.6f mean_threshold=%.6f std_threshold=%.6f",
@@ -750,11 +860,14 @@ class ModelInferenceService:
     def _population_stability_index(self, reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
         if reference.size == 0 or current.size == 0:
             return float("nan")
+
         edges = np.linspace(0.0, 1.0, bins + 1)
         ref_hist, _ = np.histogram(reference, bins=edges)
         cur_hist, _ = np.histogram(current, bins=edges)
+
         ref_ratio = ref_hist / max(ref_hist.sum(), 1)
         cur_ratio = cur_hist / max(cur_hist.sum(), 1)
+
         eps = 1e-9
         ref_ratio = np.clip(ref_ratio, eps, None)
         cur_ratio = np.clip(cur_ratio, eps, None)
@@ -763,25 +876,31 @@ class ModelInferenceService:
     def _expected_calibration_error(self, df: pd.DataFrame) -> float:
         if "actual_label" not in df.columns:
             return float("nan")
+
         valid = df.dropna(subset=["actual_label"]).copy()
         if valid.empty:
             return float("nan")
 
         probs = valid["predicted_score"].to_numpy(dtype=np.float64)
         labels = valid["actual_label"].to_numpy(dtype=np.float64)
+
         edges = np.linspace(0.0, 1.0, self._CALIBRATION_BINS + 1)
         ece = 0.0
         total = len(probs)
+
         for start, end in zip(edges[:-1], edges[1:]):
             if end >= 1.0:
                 mask = (probs >= start) & (probs <= end)
             else:
                 mask = (probs >= start) & (probs < end)
+
             if not np.any(mask):
                 continue
+
             bin_probs = probs[mask]
             bin_labels = labels[mask]
             ece += (bin_probs.size / total) * abs(float(np.mean(bin_probs)) - float(np.mean(bin_labels)))
+
         return float(ece)
 
     def _model_feature_breakdown(self, matcher: Any, features: dict[str, float]) -> dict[str, float]:
@@ -818,7 +937,7 @@ class ModelInferenceService:
 
     def _reason_text(self, feature: str, value: float, contribution: float) -> str:
         if feature == "skill_overlap":
-            return f"Strong skill Overlap ({value:.2f})."
+            return f"Strong skill overlap ({value:.2f})."
         if feature == "experience_surplus":
             return f"Experience exceeds requirement ({value:.2f} years)."
         if feature == "experience_gap":

@@ -16,4 +16,7 @@ def model_info():
         autoload_enabled=bool(settings.AI_MODEL_AUTOLOAD),
         runtime_source=str(info.get("runtime_source", "heuristic")),
         metadata=dict(info.get("metadata", {})),
+        dataset_version=(str(info.get("dataset_version"))if info.get("dataset_version") is not None else None),
+        trained_at_utc=(str(info.get("trained_at_utc"))if info.get("trained_at_utc") is not None else None),
+        metrics=dict(info.get("metrics",{})),
     )

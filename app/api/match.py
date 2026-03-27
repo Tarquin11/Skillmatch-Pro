@@ -21,7 +21,11 @@ def rank_candidates(
         employees=employees,
         limit=payload.limit,
     )
-    ranked = [MatchCandidateOut(**row) for row in ranked_rows]
+    allowed_fields = MatchCandidateOut.model_fields.keys()
+    ranked = [
+        MatchCandidateOut(**{key: value for key, value in row.items() if key in allowed_fields})
+        for row in ranked_rows
+    ]
     return JobMatchResponse(
         job_title=payload.job_title,
         required_skills=payload.required_skills,

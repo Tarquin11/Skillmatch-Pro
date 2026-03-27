@@ -9,3 +9,7 @@ class AIModelInfoResponse(StrictBaseModel):
     autoload_enabled: bool
     runtime_source: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    dataset_version: str | None = None
+    trained_at_utc: str | None = None
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+
