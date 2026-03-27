@@ -13,6 +13,10 @@ Each pair must include:
 Optional:
 - `query_id` or `job_id`
 
-## 2. Train a new version
+## 2. Data Prep (Clean, Split, Validate)
+
+Build clean/feature-ready pairs and splits:
+
 ```bash
-python -m app.scripts.retrain_matcher --input artifacts/training_pairs.jsonl --artifacts-dir artifacts
+python pipeline/run_pipeline.py --input data/raw/source.jsonl
+
