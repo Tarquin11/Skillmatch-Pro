@@ -227,15 +227,21 @@ def _split_bucket(value: Any, train_ratio: float, val_ratio: float) -> str:
         return "val"
     return "test"
 
-def _get_group_key(row : dict[str, Any], group_by: str | None) -> Any:
+def _get_group_key(row: dict[str, Any], group_by: str | None) -> Any:
     if not group_by:
         return None
     key = group_by.lower()
-    if key in {"candidate_id","employee_id"}:
-        emp = row.get("employee") or {}
-        return emp.get("id") or row.get("candidate_id") or row.get("employee_id")
-    if key in {"job_id", "query_id"}:
-        job = row.get("id") or row.get("job_id") or row.get("query_id")
+    employee = row.get("employee")
+    if not isinstance(employee, dict):
+        employee = {}
+    job = row.get("job")
+    if not isinstance(job, dict):
+        job = {}
+    if key in {"candidate_id", "employee_id"}:
+        return employee.get("id") or row.get("candidate_id") or row.get("employee_id")
+    if key == "query_id":
+        return row.get("query_id") or row.get("job_id") or job.get("id")
+    if key == "job_id":
         return job.get("id") or row.get("job_id") or row.get("query_id")
     return row.get(group_by)
 

@@ -40,3 +40,9 @@ data/splits/
 !data/splits/val.jsonl
 !data/splits/test.jsonl
 !data/processed/ranking_pairs.jsonl
+
+# Generated datasets / splits
+data/splits_by_candidate/
+data/splits/
+data/features/
+artifacts/

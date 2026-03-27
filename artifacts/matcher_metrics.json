@@ -1,13 +1,19 @@
 {
   "train_size": 180000,
   "valid_size": 45000,
-  "roc_auc": 0.9558627777777777,
-  "average_precision": 0.8535151725287528,
-  "precision": 0.8233615105939182,
-  "recall": 1.0,
-  "f1": 0.9031248118489975,
-  "precision_at_k": 0.588087133131186,
-  "recall_at_k": 0.9871828267402959,
-  "map_at_k": 0.8863652211578056,
-  "ndcg_at_k": 0.9361481767041352
+  "roc_auc": 0.9560736144444446,
+  "average_precision": 0.8544009705683813,
+  "precision": 0.823636564362994,
+  "recall": 0.9947333333333334,
+  "f1": 0.9011354028264283,
+  "precision_at_k": 0.5880070370158476,
+  "recall_at_k": 0.9871074060100892,
+  "map_at_k": 0.8868737443990486,
+  "ndcg_at_k": 0.935710968499844,
+  "model_version": "20260327_01",
+  "trained_at_utc": "2026-03-27T14:26:38.517628+00:00",
+  "input_path": "data\\features\\pairs.jsonl",
+  "artifact_path": "artifacts\\matcher_20260327_01.joblib",
+  "dataset_version": "ds_2026_03_27",
+  "dataset_sha256": "7786777c9dc4c4cfee76f277a33b7abbe989a93f919c64765962d572df6f933e"
 }
