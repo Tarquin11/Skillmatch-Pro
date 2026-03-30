@@ -47,3 +47,7 @@ data/splits_by_candidate/
 data/splits/
 data/features/
 artifacts/
+
+data/splits_by_job/
+
+data/splits_by_candidate/
