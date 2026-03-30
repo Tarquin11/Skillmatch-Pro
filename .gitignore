@@ -42,6 +42,7 @@ data/splits/
 !data/processed/ranking_pairs.jsonl
 
 # Generated datasets / splits
+data/splits_by_job/
 data/splits_by_candidate/
 data/splits/
 data/features/
