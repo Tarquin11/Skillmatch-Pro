@@ -12,4 +12,7 @@ class AIModelInfoResponse(StrictBaseModel):
     dataset_version: str | None = None
     trained_at_utc: str | None = None
     metrics: Dict[str, Any] = Field(default_factory=dict)
-
+    canary_enabled: bool = False
+    canary_traffic_percent: float = 0.0
+    canary_model_path: str | None = None
+    canary_model_exists: bool = False

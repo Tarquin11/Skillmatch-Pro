@@ -9,17 +9,22 @@ router = APIRouter(prefix="/match",tags=["matching"],dependencies=[Depends(get_c
 inference_service = ModelInferenceService()
 @router.post("/job", response_model=JobMatchResponse)
 @router.post("/jobs", response_model=JobMatchResponse)
+
 def rank_candidates(
     payload: JobMatchRequest, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_active_user),
 ):
     employees = db.query(Employee).all()
+    routing_key = f"user:{getattr(current_user, 'id', 'na')}|{getattr(current_user,'email', '')}"
+
     ranked_rows = inference_service.rank_candidates(
         job_title=payload.job_title,
         required_skills=payload.required_skills,
         min_experience=payload.min_experience,
         employees=employees,
         limit=payload.limit,
+        routing_key=routing_key,
     )
     allowed_fields = MatchCandidateOut.model_fields.keys()
     ranked = [

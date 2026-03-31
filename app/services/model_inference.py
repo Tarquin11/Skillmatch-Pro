@@ -3,6 +3,7 @@ import csv
 import json
 import logging
 import os
+import hashlib
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from app.ai.runtime import get_matcher
 from app.core.structured_log import EVENT_AI_FALLBACK_USED,EVENT_AI_PREDICTION_FAILURE,REASON_FALLBACK_USED,REASON_MODEL_FAIL,log_structured_event
 from app.services.matching import calculate_weighted_score
 from app.services.training_recommendation import build_training_recommendations
+from app.ai.matcher import CandidateMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,17 @@ class ModelInferenceService:
     _CALIBRATION_BINS = int(os.getenv("AI_CALIBRATION_BINS", "10"))
     _CALIBRATION_WARNING_MEAN_GT = float(os.getenv("AI_CALIBRATION_WARNING_MEAN_GT", "0.95"))
     _CALIBRATION_WARNING_STD_LT = float(os.getenv("AI_CALIBRATION_WARNING_STD_LT", "0.03"))
+    _CANARY_ENABLED = os.getenv("AI_CANARY_ENABLED", "false").strip().lower() in {"1", "true","yes","on"}
+    _CANARY_MODEL_PATH = Path(os.getenv("AI_CANARY_MODEL_PATH", "artifacts/matcher_canary.joblib"))
+
+    try:
+        _CANARY_TRAFFIC_PERCENT = float(os.getenv("AI_CANARY_TRAFFIC_PERCENT", "0"))
+    except ValueError:
+        _CANARY_TRAFFIC_PERCENT = 0.0
+    _CANARY_TRAFFIC_PERCENT = min(100.0, max(0.0, _CANARY_TRAFFIC_PERCENT))
+    _CANARY_STICKY_SALT = os.getenv("AI_CANARY_STICKY_SALT","skillmatch-canary-v1")
+    _CANARY_MATCHER: Any | None = None
+    _CANARY_LOAD_ATTEMTED = False
 
     def _log_inference_metrics(
         self,
@@ -149,6 +162,64 @@ class ModelInferenceService:
         self._PRED_CACHE.move_to_end(key)
         while len(self._PRED_CACHE) > self._CACHE_MAX:
             self._PRED_CACHE.popitem(last=False)
+    
+    @classmethod
+    def _get_canary_matcher(cls) -> Any | None:
+        if not cls._CANARY_ENABLED or cls._CANARY_TRAFFIC_PERCENT <= 0:
+            return None
+        if cls._CANARY_LOAD_ATTEMTED:
+            return cls._CANARY_MATCHER
+        
+        cls._CANARY_LOAD_ATTEMTED = True
+        if not cls._CANARY_LOAD_PATH.exists():
+            logger.warning ("ai_canary_model_missing path=%s", cls._CANARY_MODEL_PATH)
+            return None
+        
+        try:
+            matcher = CandidateMatcher.load(cls._CANARY_MODEL_PATH)
+            if not getattr(matcher, "is_fitted", False):
+                logger.warning("ai_canary_model_unfitted path=%s", cls._CANARY_MODEL_PATH)
+                return None
+            cls._CANARY_MATCHER = matcher
+            logger.info("ai_canary_model_loaded path=%s", cls._CANARY_MODEL_PATH)
+            return cls._CANARY_MATCHER
+        except Exception:
+            logger.exception("ai_canary_model_load_failure path=%s", cls._CANARY_MODEL_PATH)
+            return None
+        
+    def _stable_rollout_bucket(self, routing_key: str) -> float:
+        digest = hashlib.sha256(f"{self._CANARY_STICKY_SALT}|{routing_key}".encode("utf-8")).hexdigest()
+        return (int(digest[:8], 16) / 0xFFFFFFFF) * 100.0
+
+    def _select_model_matcher(
+        self,
+        *,
+        job_title: str,
+        required_skills: Sequence[str],
+        min_experience: int,
+        routing_key: str | None,
+    ) -> tuple[Any | None, str]:
+        primary = get_matcher()
+        if primary is None or not getattr(primary, "is_fitted", False):
+            return None, "heuristic"
+
+        canary = self._get_canary_matcher()
+        if canary is None:
+            return primary, "model_primary"
+
+        seed = routing_key or self._job_cache_key(job_title, required_skills, min_experience)
+        bucket = self._stable_rollout_bucket(seed)
+        use_canary = bucket < self._CANARY_TRAFFIC_PERCENT
+        source = "model_canary" if use_canary else "model_primary"
+
+        logger.info(
+            "ai_canary_routing source=%s bucket=%.4f threshold=%.2f key_hash=%s",
+            source,
+            bucket,
+            self._CANARY_TRAFFIC_PERCENT,
+            hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12],
+        )
+        return (canary if use_canary else primary), source
 
     def rank_candidates(
         self,
@@ -158,10 +229,16 @@ class ModelInferenceService:
         min_experience: int,
         employees: Sequence[Any],
         limit: int,
+        routing_key: str | None = None,
     ) -> list[dict[str, Any]]:
-        matcher = get_matcher()
+        matcher, model_source = self._select_model_matcher(
+            job_title=job_title,
+            required_skills=required_skills,
+            min_experience=min_experience,
+            routing_key=routing_key,
+        )
 
-        if matcher and getattr(matcher, "is_fitted", False):
+        if matcher is not None:
             try:
                 ranked = self._rank_with_model(
                     matcher=matcher,
@@ -169,23 +246,25 @@ class ModelInferenceService:
                     required_skills=required_skills,
                     min_experience=min_experience,
                     employees=employees,
+                    model_source=model_source,
                 )
             except Exception:
                 self._log_structured_failure(
                     reason=REASON_MODEL_FAIL,
                     stage="rank_candidates_batch",
-                    source="model",
+                    source=model_source,
                     job_title=job_title,
                 )
                 logger.exception(
-                    "ai_prediction_failure scope=batch source=model job_title=%s",
+                    "ai_prediction_failure scope=batch source=%s job_title=%s",
+                    model_source,
                     job_title,
                 )
                 self._log_structured_fallback(
                     stage="rank_candidates_batch",
                     fallback_source="heuristic",
                     job_title=job_title,
-                    details="model_batch_failed",
+                    details=f"{model_source}_batch_failed",
                 )
                 ranked = self._rank_with_heuristic(
                     job_title=job_title,
@@ -198,7 +277,7 @@ class ModelInferenceService:
                 stage="rank_candidates_entry",
                 fallback_source="heuristic",
                 job_title=job_title,
-                details="matcher_unavailable_or_unfitted",
+                details="primary_model_unavailable",
             )
             ranked = self._rank_with_heuristic(
                 job_title=job_title,
@@ -206,7 +285,6 @@ class ModelInferenceService:
                 min_experience=min_experience,
                 employees=employees,
             )
-
         ranked.sort(key=lambda x: x["predicted_fit_score"], reverse=True)
 
         self._log_prediction_distribution(
@@ -228,6 +306,7 @@ class ModelInferenceService:
         required_skills: Sequence[str],
         min_experience: int,
         employees: Sequence[Any],
+        model_source: str,
     ) -> list[dict[str, Any]]:
         job_payload = {
             "title": job_title,
@@ -241,7 +320,7 @@ class ModelInferenceService:
         pending: list[tuple[Any, str]] = []
 
         for employee in employees:
-            cache_key = f"model|{job_key}|{self._employee_cache_key(employee)}"
+            cache_key = f"{model_source}|{job_key}|{self._employee_cache_key(employee)}"
             cached = self._cache_get(cache_key)
             if cached:
                 out.append(cached)
@@ -325,7 +404,7 @@ class ModelInferenceService:
                         "predicted_fit_score": round(score, 2),
                         "score_raw": float(score),
                         "predicted_fit_score_raw": float(score),
-                        "scoring_source": "model",
+                        "scoring_source": model_source,
                         "feature_breakdown": breakdown,
                         "top_reasons": reasons,
                         "matched_skills": gap_report["matched_skills"],

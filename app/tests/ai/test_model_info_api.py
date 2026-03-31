@@ -8,6 +8,9 @@ def test_model_info_endpoint(client, admin_auth, monkeypatch, tmp_path):
     model_path = tmp_path / "matcher.joblib"
     CandidateMatcher(use_semantic=False).save(model_path)
 
+    canary_model_path = tmp_path / "matcher_canary.joblib"
+    CandidateMatcher(use_semantic=False).save(canary_model_path)
+
     metrics_path = tmp_path / "matcher_metrics.json"
     metrics_path.write_text(
         json.dumps(
@@ -18,10 +21,14 @@ def test_model_info_endpoint(client, admin_auth, monkeypatch, tmp_path):
                 "f1": 0.84,
             }
         ),
-    encoding="utf-8",
-)
+        encoding="utf-8",
+    )
+
     runtime.load_matcher_artifact(model_path)
     monkeypatch.setattr(settings, "AI_MODEL_PATH", str(model_path), raising=False)
+    monkeypatch.setattr(settings, "AI_CANARY_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "AI_CANARY_MODEL_PATH", str(canary_model_path), raising=False)
+    monkeypatch.setattr(settings, "AI_CANARY_TRAFFIC_PERCENT", 10.0, raising=False)
 
     r = client.get("/ai/model-info", headers=admin_auth)
     assert r.status_code == 200, r.text
@@ -36,3 +43,13 @@ def test_model_info_endpoint(client, admin_auth, monkeypatch, tmp_path):
     assert body["metrics"]["roc_auc"] == 0.91
     assert body["metrics"]["f1"] == 0.84
 
+    assert body["canary_enabled"] is True
+    assert body["canary_traffic_percent"] == 10.0
+    assert body["canary_model_path"] == str(canary_model_path)
+    assert body["canary_model_exists"] is True
+
+    canary_meta = body["metadata"]["canary"]
+    assert canary_meta["enabled"] is True
+    assert canary_meta["traffic_percent"] == 10.0
+    assert canary_meta["model_path"] == str(canary_model_path)
+    assert canary_meta["model_exists"] is True
