@@ -1,0 +1,35 @@
+(venv) PS C:\Users\zarro\OneDrive\Desktop\PFE\skillmatch-pro-back> schtasks /Run /TN "SkillMatch_Holdout_Eval"
+>> Start-Sleep -Seconds 8
+>> schtasks /Query /TN "SkillMatch_Holdout_Eval" /V /FO LIST
+>>
+SUCCESS: Attempted to run the scheduled task "SkillMatch_Holdout_Eval".
+
+Folder: \
+HostName:                             TAZ
+TaskName:                             \SkillMatch_Holdout_Eval
+Next Run Time:                        3/31/2026 11:00:00 PM
+Status:                               Running
+Logon Mode:                           Interactive only
+Last Run Time:                        3/31/2026 8:10:03 PM
+Last Result:                          267009
+Author:                               TAZ\zarro
+Task To Run:                          powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\zarro\OneDrive\Desktop\PFE\skillmatch-pro-back\run_holdout_eval.ps1
+Start In:                             N/A
+Comment:                              N/A
+Scheduled Task State:                 Enabled
+Idle Time:                            Disabled
+Power Management:                     Stop On Battery Mode, No Start On Batteries
+Run As User:                          zarro
+Delete Task If Not Rescheduled:       Disabled
+Stop Task If Runs X Hours and X Mins: 72:00:00
+Schedule:                             Scheduling data is not available in this format.
+Schedule Type:                        Daily
+Start Time:                           11:00:00 PM
+Start Date:                           3/31/2026
+End Date:                             N/A
+Days:                                 Every 1 day(s)
+Months:                               N/A
+Repeat: Every:                        Disabled
+Repeat: Until: Time:                  Disabled
+Repeat: Until: Duration:              Disabled
+Repeat: Stop If Still Running:        Disabled
