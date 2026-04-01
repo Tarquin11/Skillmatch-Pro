@@ -3,9 +3,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-def _headers_for_role(role: str, admin_auth: dict[str, str], user_auth: dict[str, str]) -> dict[str, str]:
+def _headers_for_role(
+    role: str,
+    admin_auth: dict[str, str],
+    recruiter_auth: dict[str, str],
+    user_auth: dict[str, str],
+) -> dict[str, str]:
     if role == "admin":
         return admin_auth
+    if role == "recruiter":
+        return recruiter_auth
     if role == "user":
         return user_auth
     return {}
@@ -75,40 +82,40 @@ CASES = [
         "id": "auth_me_get",
         "method": "GET",
         "path": "/auth/me",
-        "expected": {"admin": 200, "user": 200, "anon": 401},
+        "expected": {"admin": 200, "recruiter": 200, "user": 200, "anon": 401},
     },
     {
         "id": "skills_list_get",
         "method": "GET",
         "path": "/skills/",
-        "expected": {"admin": 200, "user": 200, "anon": 401},
+        "expected": {"admin": 200, "recruiter": 200, "user": 200, "anon": 401},
     },
     {
         "id": "skills_create_post",
         "method": "POST",
         "path": "/skills/",
         "json": lambda c: {"name": f"MatrixSkill-{c['nonce']}"},
-        "expected": {"admin": 201, "user": 403, "anon": 401},
+        "expected": {"admin": 201, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "skills_delete_delete",
         "method": "DELETE",
         "path": lambda c: f"/skills/{c['skill_id']}",
-        "expected": {"admin": 204, "user": 403, "anon": 401},
+        "expected": {"admin": 204, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "departments_create_post",
         "method": "POST",
         "path": "/departments/",
         "json": lambda c: {"name": f"Matrix Department {c['nonce']}"},
-        "expected": {"admin": 201, "user": 403, "anon": 401},
+        "expected": {"admin": 201, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "jobs_create_post",
         "method": "POST",
         "path": "/jobs/",
         "json": lambda c: {"title": f"Matrix New Job {c['nonce']}"},
-        "expected": {"admin": 201, "user": 403, "anon": 401},
+        "expected": {"admin": 201, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "employees_create_post",
@@ -121,35 +128,35 @@ CASES = [
             "full_name": "Role Matrix",
             "email": f"new.{c['nonce']}@example.com",
         },
-        "expected": {"admin": 201, "user": 403, "anon": 401},
+        "expected": {"admin": 201, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "job_skill_upsert_post",
         "method": "POST",
         "path": lambda c: f"/jobs/{c['job_id']}/skills",
         "json": lambda c: {"skill_id": c["skill_id"], "required_level": 3, "weight": 1.0},
-        "expected": {"admin": 200, "user": 403, "anon": 401},
+        "expected": {"admin": 200, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "employee_skill_assign_post",
         "method": "POST",
         "path": lambda c: f"/skills/employees/{c['employee_id']}",
         "json": lambda c: {"skill_id": c["skill_id"], "level": 3},
-        "expected": {"admin": 200, "user": 403, "anon": 401},
+        "expected": {"admin": 200, "recruiter": 403, "user": 403, "anon": 401},
     },
     {
         "id": "legacy_departements_get",
         "method": "GET",
         "path": "/departements/",
-        "expected": {"admin": 200, "user": 200, "anon": 401},
+        "expected": {"admin": 200, "recruiter": 200, "user": 200, "anon": 401},
     },
 ]
 
 
-@pytest.mark.parametrize("role", ["admin", "user", "anon"])
+@pytest.mark.parametrize("role", ["admin", "recruiter", "user", "anon"])
 @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
-def test_permission_matrix(client, admin_auth, user_auth, matrix_seed, role, case):
-    headers = _headers_for_role(role, admin_auth, user_auth)
+def test_permission_matrix(client, admin_auth, recruiter_auth, user_auth, matrix_seed, role, case):
+    headers = _headers_for_role(role, admin_auth, recruiter_auth, user_auth)
 
     path = case["path"](matrix_seed) if callable(case["path"]) else case["path"]
     payload_builder = case.get("json")

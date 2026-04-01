@@ -68,3 +68,7 @@ def admin_auth(client):
 @pytest.fixture()
 def user_auth(client):
     return _signup_and_login(client, "user")
+
+@pytest.fixture()
+def recruiter_auth(client):
+    return _signup_and_login(client, "recruiter")

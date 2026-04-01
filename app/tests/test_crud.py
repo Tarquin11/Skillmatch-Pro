@@ -18,8 +18,14 @@ def test_employees_crud(client, admin_auth):
 
     r = client.get(f"/employees/{emp_id}", headers=admin_auth)
     assert r.status_code == 200
+    emp_etag = r.headers.get("etag")
+    assert emp_etag
 
-    r = client.put(f"/employees/{emp_id}", headers=admin_auth, json={"position": "System Administrator"})
+    r = client.put(
+        f"/employees/{emp_id}",
+        headers={**admin_auth, "If-Match": emp_etag},
+        json={"position": "System Administrator"},
+    )
     assert r.status_code == 200
     assert r.json()["position"] == "System Administrator"
 
@@ -37,8 +43,14 @@ def test_jobs_crud(client, admin_auth):
 
     r = client.get(f"/jobs/{job_id}", headers=admin_auth)
     assert r.status_code == 200
+    job_etag = r.headers.get("etag")
+    assert job_etag
 
-    r = client.put(f"/jobs/{job_id}", headers=admin_auth, json={"description": "Updated"})
+    r = client.put(
+        f"/jobs/{job_id}",
+        headers={**admin_auth, "If-Match": job_etag},
+        json={"description": "Updated"},
+    )
     assert r.status_code == 200
 
     r = client.delete(f"/jobs/{job_id}", headers=admin_auth)
@@ -52,8 +64,14 @@ def test_skills_crud(client, admin_auth):
 
     r = client.get(f"/skills/{skill_id}", headers=admin_auth)
     assert r.status_code == 200
+    skill_etag = r.headers.get("etag")
+    assert skill_etag
 
-    r = client.put(f"/skills/{skill_id}", headers=admin_auth, json={"name": "K8s"})
+    r = client.put(
+        f"/skills/{skill_id}",
+        headers={**admin_auth, "If-Match": skill_etag},
+        json={"name": "K8s"},
+    )
     assert r.status_code == 200
     assert r.json()["name"] == "K8s"
 
@@ -68,8 +86,14 @@ def test_departements_crud(client, admin_auth):
 
     r = client.get(f"/departments/{dep_id}", headers=admin_auth)
     assert r.status_code == 200
+    dep_etag = r.headers.get("etag")
+    assert dep_etag
 
-    r = client.put(f"/departments/{dep_id}", headers=admin_auth, json={"name": "Quality Assurance"})
+    r = client.put(
+        f"/departments/{dep_id}",
+        headers={**admin_auth, "If-Match": dep_etag},
+        json={"name": "Quality Assurance"},
+    )
     assert r.status_code == 200
     assert r.json()["name"] == "Quality Assurance"
 

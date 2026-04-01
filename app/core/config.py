@@ -9,6 +9,14 @@ def _get_required_env(name: str) -> str:
         return value
     raise RuntimeError(f"Missing required environment variable: {name}")
 
+def _get_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 class Settings:
     PROJECT_NAME: str = "SkillMatch Pro"
@@ -25,5 +33,10 @@ class Settings:
     AI_MODEL_PATH: str = os.getenv("AI_MODEL_PATH", "artifacts/matcher.joblib")
     AI_MODEL_AUTOLOAD: bool = os.getenv("AI_MODEL_AUTOLOAD", "true").strip().lower() in {"1", "true", "yes", "on"}
     AI_MODEL_VERSION: str = os.getenv("AI_MODEL_VERSION", "dev")
+    AI_CANARY_ENABLED: bool = os.getenv("AI_CANARY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    AI_CANARY_MODEL_PATH: str = os.getenv("AI_CANARY_MODEL_PATH", "artifacts/matcher_canary.joblib")
+    AI_CANARY_TRAFFIC_PERCENT: float = max(0.0, min(100.0, _get_float_env("AI_CANARY_TRAFFIC_PERCENT", 0.0)))
+
+    
 
 settings = Settings()

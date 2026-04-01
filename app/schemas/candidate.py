@@ -12,4 +12,6 @@ class CandidateUploadRespose(StrictBaseModel):
     skills: List[str]
     preview: str
     extracted_skills: List[CandidateSkillExtraction] = Field(default_factory=list)
+    predicted_title: str | None = None
+    predicted_experience_years: float | None = None
 

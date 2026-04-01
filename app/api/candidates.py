@@ -9,7 +9,13 @@ from app.db.database import get_db
 from app.models.skill import Skill
 from app.schemas.candidate import CandidateUploadRespose
 from app.schemas.common import ErrorResponse
-from app.services.cv_parser import detect_skills, detect_skills_with_confidence, extract_text
+from app.services.cv_parser import (
+    detect_experience_years,
+    detect_skills,
+    detect_skills_with_confidence,
+    detect_title,
+    extract_text,
+)
 
 router = APIRouter(
     prefix="/candidates",
@@ -116,6 +122,8 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             skills=skills,
             extracted_skills=extracted_skills,
             preview=(text or "")[:200],
+            predicted_title=detect_title(text),
+            predicted_experience_years=detect_experience_years(text),
         )
     except HTTPException:
         raise

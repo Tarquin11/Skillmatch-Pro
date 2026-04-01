@@ -1,16 +1,68 @@
 import io
 import re
 import math
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 import numpy as np
 import pdfplumber
 from docx import Document
-from app.ai.preprocessing import normalize_skill_name
+from app.ai.skill_canonicalization import canonicalize_skill
 from app.services.embedding_service import EmbeddingService
 
+_SKILL_HEADING_HINTS = (
+    "skills", "technical skills", "technologies", "tech stack",
+    "tools", "competencies", "core skills"
+)
+_DURATION_PHRASE_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:months?|years?|yrs?)$", re.I)
 WORD_RE = re.compile(r"[a-z0-9+.#/\-]+")
+_EXPERIENCE_YEARS_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?|ans)\b", re.IGNORECASE)
+_YEAR_RANGE_RE = re.compile(
+    r"\b(19\d{2}|20\d{2})\s*(?:-|–|—|to)\s*(present|current|now|19\d{2}|20\d{2})\b",
+    re.IGNORECASE,
+)
+
+_EXPERIENCE_HEADING_HINTS = (
+    "experience",
+    "work experience",
+    "professional experience",
+    "employment",
+    "working",
+    "internship",
+    "internships",
+    "projects",
+    "project",
+    "freelance",
+)
+_EDUCATION_HEADING_HINTS = (
+    "education",
+    "academic",
+    "school",
+    "university",
+    "college",
+)
+_TITLE_KEYWORDS = (
+    "engineer",
+    "developer",
+    "analyst",
+    "manager",
+    "designer",
+    "scientist",
+    "consultant",
+    "specialist",
+    "student",
+    "intern",
+    "architect",
+)
 BULLET_PREFIXES = ("-", "*", "•", "â€¢")
+
+def _is_skill_heading(section_key: str) -> bool:
+    key = _normalize_text(section_key)
+    return any(h in key for h in _SKILL_HEADING_HINTS)
+
+def _is_noise_skill_phrase(phrase: str) -> bool:
+    p = _normalize_text(phrase)
+    return bool(_DURATION_PHRASE_RE.fullmatch(p))
 
 def _clean_extracted_text(text: str) -> str:
     text = (text or "").replace("\x00", "")
@@ -52,16 +104,39 @@ def _ngram_candidates(tokens: list[str], max_n: int = 4) -> set[str]:
     return out
 
 def _skill_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]","", normalize_skill_name(value))
+    canonical = canonicalize_skill(value)
+    canonical = canonical.replace("c++", "cpp")
+    canonical = canonical.replace("c#", "csharp")
+    canonical = canonical.replace("+", " plus ")
+    canonical = canonical.replace("#", " sharp ")
+    return re.sub(r"[^a-z0-9]", "", canonical)
 
 def _acronym(value: str) -> str:
-    parts = [p for p in normalize_skill_name(value).split() if p]
+    parts = [p for p in canonicalize_skill(value).split() if p]
     return "".join(p[0] for p in parts if p and p[0].isalnum())
+
+
+def _looks_like_letter_spaced_text(value: str) -> bool:
+    parts = [p for p in value.strip().split() if p]
+    alpha_parts = [p for p in parts if any(ch.isalpha() for ch in p)]
+    if len(alpha_parts) < 6:
+        return False
+    single = sum(1 for p in alpha_parts if len(p) == 1 and p.isalpha())
+    return (single / len(alpha_parts)) >= 0.75
+
+
+def _collapse_letter_spaced_text(value: str) -> str:
+    parts = [p for p in value.strip().split() if p]
+    if not parts:
+        return ""
+    if _looks_like_letter_spaced_text(value):
+        return "".join(parts).upper()
+    return value.strip()
 
 def _build_skill_index(known_skills: Iterable[str]) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for raw in known_skills or []:
-        canonical = normalize_skill_name(raw)
+        canonical = canonicalize_skill(raw)
         if not canonical:
             continue
         skill_key= _skill_key(canonical)
@@ -69,7 +144,7 @@ def _build_skill_index(known_skills: Iterable[str]) -> dict[str, dict[str, Any]]
             continue
         aliases = {skill_key}
         ac = _acronym(canonical)
-        if len(ac) >=2:
+        if len(ac) >= 3 and len(canonical.split()) >= 3:
             aliases.add(ac)
         
         index[canonical] = {"skill_key": skill_key, "aliases": aliases}
@@ -144,6 +219,25 @@ def _extract_section_phrases(sections: dict[str, list[str]]) -> list[tuple[str, 
                     phrases.append((part, section))
     return phrases
 
+
+def _is_experience_heading(section_key: str) -> bool:
+    key = _normalize_text(section_key)
+    return any(h in key for h in _EXPERIENCE_HEADING_HINTS)
+
+
+def _is_education_heading(section_key: str) -> bool:
+    key = _normalize_text(section_key)
+    return any(h in key for h in _EDUCATION_HEADING_HINTS)
+
+
+def _year_from_token(token: str) -> int | None:
+    token = (token or "").strip().lower()
+    if token in {"present", "current", "now"}:
+        return datetime.now(timezone.utc).year
+    if re.fullmatch(r"(19\d{2}|20\d{2})", token):
+        return int(token)
+    return None
+
 _EMBEDDER: EmbeddingService | None = None
 _EMBED_CACHE: dict[int, tuple[np.ndarray, list[str]]] = {}
 
@@ -182,7 +276,7 @@ def _calibrate_confidence(raw_conf : float, source: str, section_weight: float) 
         "exact": 1.0,
         "synonym": 0.95,
         "fuzzy": 0.90,
-        "semntic":0.92,
+        "semantic":0.92,
         "legacy": 0.88,
     }.get(source_key, 0.92)
 
@@ -261,15 +355,22 @@ def detect_skills_with_confidence(
         best_conf = 0.0
         best_source = "fuzzy"
         best_section_weight = 0.9
+        is_short_ambiguous = len(skill_key) <= 1
 
         for gram in ngrams:
+            if is_short_ambiguous:
+                continue
             gram_key = ngram_keys[gram]
             if not gram_key:
                 continue
             if gram_key in aliases:
                 conf = 0.98 if gram_key == skill_key else 0.90
                 source = "exact" if gram_key == skill_key else "synonym"
-            elif ngram_acronyms[gram] in aliases:
+            elif (
+                len(ngram_acronyms[gram]) >= 3
+                and len(gram.split()) >= 3
+                and ngram_acronyms[gram] in aliases
+            ):
                 conf = 0.88
                 source = "synonym"
             else:
@@ -284,8 +385,13 @@ def detect_skills_with_confidence(
                 best_section_weight = 0.9
 
         for phrase, section in section_phrases:
+            if _is_noise_skill_phrase(phrase):
+                continue
             phrase_key = _skill_key(phrase)
             if not phrase_key:
+                continue
+            is_skill_section = _is_skill_heading(section)
+            if is_short_ambiguous and not is_skill_section:
                 continue
             if phrase_key in aliases:
                 base = 0.95
@@ -293,7 +399,10 @@ def detect_skills_with_confidence(
                 source = f"exact:{section}"
             else:
                 ratio = SequenceMatcher(None, skill_key, phrase_key).ratio()
-                if ratio < 0.88:
+                min_ratio = 0.90 if is_skill_section else 0.97
+                if ratio < min_ratio:
+                    continue
+                if (not is_skill_section) and (len(skill_key) <= 3):
                     continue
                 base = min(0.80, ratio)
                 conf = min(0.90, base * section_weights.get(section, 0.85))
@@ -317,6 +426,128 @@ def detect_skills_with_confidence(
             )
     hits.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
     return hits
+
+
+def detect_title(text: str) -> str | None:
+    lines = [re.sub(r"\s+", " ", ln).strip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+
+    for line in lines[:40]:
+        low = line.lower()
+        if "@" in low or "http://" in low or "https://" in low:
+            continue
+        if len(line) > 140:
+            continue
+        if " with " in low and any(k in low for k in _TITLE_KEYWORDS):
+            prefix = line.split(" with ", 1)[0].strip(" -,:")
+            if 2 <= len(prefix.split()) <= 8:
+                return prefix
+
+    for line in lines[:25]:
+        low = line.lower()
+        if "@" in low:
+            continue
+        if len(line) > 90:
+            continue
+        if any(k in low for k in _TITLE_KEYWORDS):
+            return line.strip(" -,:")
+        if _looks_like_letter_spaced_text(line):
+            collapsed = _collapse_letter_spaced_text(line)
+            if collapsed:
+                return collapsed
+    return None
+
+
+def detect_experience_years(text: str) -> float | None:
+    normalized = _normalize_text(text)
+    explicit = [float(x) for x in _EXPERIENCE_YEARS_RE.findall(normalized)]
+    if explicit:
+        return round(max(explicit), 2)
+
+    sections, _weights = _extract_sections(text)
+    ranges: list[tuple[int, int]] = []
+    current_year = datetime.now(timezone.utc).year
+
+    for section, lines in sections.items():
+        if _is_education_heading(section):
+            continue
+        heading_bonus = _is_experience_heading(section)
+        for line in lines:
+            line_low = _normalize_text(line)
+            if not heading_bonus and not any(h in line_low for h in _EXPERIENCE_HEADING_HINTS):
+                continue
+            for start_s, end_s in _YEAR_RANGE_RE.findall(line_low):
+                start = _year_from_token(start_s)
+                end = _year_from_token(end_s)
+                if start is None or end is None:
+                    continue
+                end = min(end, current_year)
+                if end < start:
+                    continue
+                if (end - start) > 50:
+                    continue
+                ranges.append((start, end))
+
+    if not ranges:
+        lines = [_normalize_text(ln) for ln in (text or "").splitlines() if ln and ln.strip()]
+        context_years: list[int] = []
+        for i, line in enumerate(lines):
+            year_tokens = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", line)]
+            if not year_tokens:
+                continue
+            window_start = max(0, i - 12)
+            window_end = min(len(lines), i + 13)
+            window = " ".join(lines[window_start:window_end])
+            line_has_experience = any(h in line for h in _EXPERIENCE_HEADING_HINTS)
+            line_has_education = any(h in line for h in _EDUCATION_HEADING_HINTS)
+            window_has_experience = any(h in window for h in _EXPERIENCE_HEADING_HINTS)
+
+            if line_has_education and not line_has_experience:
+                continue
+            if window_has_experience:
+                context_years.extend(year_tokens)
+
+        if not context_years:
+            has_practical_hint = any(h in normalized for h in _EXPERIENCE_HEADING_HINTS)
+            if not has_practical_hint:
+                return None
+            loose_years: list[int] = []
+            for line in lines:
+                year_tokens = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", line)]
+                if not year_tokens:
+                    continue
+                if _looks_like_letter_spaced_text(line):
+                    continue
+                if any(h in line for h in _EDUCATION_HEADING_HINTS):
+                    continue
+                if any(k in line for k in ("high-school", "high school", "section")):
+                    continue
+                loose_years.extend(year_tokens)
+            if not loose_years:
+                return None
+            lo = min(loose_years)
+            hi = min(max(loose_years), current_year)
+            if hi < lo:
+                return None
+            span = hi - lo
+            return 1.0 if span <= 0 else round(float(span), 2)
+        lo = min(context_years)
+        hi = min(max(context_years), current_year)
+        if hi < lo:
+            return None
+        span = hi - lo
+        return 1.0 if span <= 0 else round(float(span), 2)
+
+    ranges.sort(key=lambda x: (x[0], x[1]))
+    merged: list[tuple[int, int]] = []
+    for s, e in ranges:
+        if not merged or s > (merged[-1][1] + 1):
+            merged.append((s, e))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+
+    total_years = sum((e - s) for s, e in merged)
+    return round(float(total_years), 2)
 
 def detect_skills(text: str, known_skills: Iterable[str] | None = None) -> list[str]:
     if not known_skills:

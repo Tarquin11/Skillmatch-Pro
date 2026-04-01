@@ -2,7 +2,7 @@ from typing import Literal
 from pydantic import EmailStr, ConfigDict
 from app.schemas.common import StrictBaseModel
 
-UserRole = Literal["admin", "user"]
+UserRole = Literal["admin", "recruiter", "user"]
 
 class UserCreate(StrictBaseModel):
     email: EmailStr
