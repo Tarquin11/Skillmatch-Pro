@@ -51,3 +51,7 @@ artifacts/
 data/splits_by_job/
 
 data/splits_by_candidate/
+
+# Generated CV docs
+/data/cv_hf_docs/
+
