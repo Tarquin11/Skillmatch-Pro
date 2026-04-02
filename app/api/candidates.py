@@ -1,21 +1,21 @@
 import io
 import logging
 import zipfile
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
+
 from app.api.auth import get_current_active_user
-from app.core.structured_log import REASON_FALLBACK_USED,EVENT_CV_PARSE_FAILURE,REASON_PARSING_FAIL,EVENT_CV_PARSE_FALLBACK,log_structured_event
+from app.core.structured_log import (
+    EVENT_CV_PARSE_FAILURE,
+    REASON_PARSING_FAIL,
+    log_structured_event,
+)
 from app.db.database import get_db
 from app.models.skill import Skill
 from app.schemas.candidate import CandidateUploadRespose
 from app.schemas.common import ErrorResponse
-from app.services.cv_parser import (
-    detect_experience_years,
-    detect_skills,
-    detect_skills_with_confidence,
-    detect_title,
-    extract_text,
-)
+from app.services.cv_parser import parse_cv_safe
 
 router = APIRouter(
     prefix="/candidates",
@@ -99,31 +99,27 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             if not safe_name.lower().endswith(".docx"):
                 safe_name = "cv.docx"
 
-        text = extract_text(contents, safe_name)
-
         known_skills = [name for (name,) in db.query(Skill.name).all() if name]
-        extracted_skills = detect_skills_with_confidence(text, known_skills=known_skills)
-        skills = [row["skill"] for row in extracted_skills]
-        if not skills:
-            log_structured_event(
-                logger,
-                level=logging.INFO,
-                event=EVENT_CV_PARSE_FALLBACK,
-                reason=REASON_FALLBACK_USED,
-                stage="legacy_skill_detector",
-                filename=file.filename,
-            )
-            skills = detect_skills(text)
-            extracted_skills = [
-                {"skill": skill, "confidence": 0.6, "source": "legacy"} for skill in skills
-            ]
+        parsed = parse_cv_safe(
+            file_bytes=contents,
+            filename=safe_name,
+            known_skills=known_skills,
+            min_confidence=0.6,
+            use_semantic=False,
+        )
+
         return CandidateUploadRespose(
             filename=file.filename,
-            skills=skills,
-            extracted_skills=extracted_skills,
-            preview=(text or "")[:200],
-            predicted_title=detect_title(text),
-            predicted_experience_years=detect_experience_years(text),
+            ok=parsed["ok"],
+            degraded=parsed["degraded"],
+            errors=parsed["errors"],
+            warnings=parsed["warnings"],
+            text_length=parsed["text_length"],
+            skills=parsed["skills"],
+            extracted_skills=parsed["extracted_skills"],
+            preview=parsed["preview"],
+            predicted_title=parsed["predicted_title"],
+            predicted_experience_years=parsed["predicted_experience_years"],
         )
     except HTTPException:
         raise

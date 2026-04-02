@@ -195,14 +195,18 @@ def main():
     parser.add_argument("--gates-config", default="app/config/promotion_policy.json")
     parser.add_argument("--drift-report", default=None, help="Override drift report path from gate config.")
     parser.add_argument("--generalization-report", default=None, help="Override generalization report path from gate config.")
+    parser.add_argument("--robustness-report", default=None, help="Override robustness report path from gate config.")
     parser.add_argument("--skip-drift-gates", action="store_true")
     parser.add_argument("--skip-generalization-gates", action="store_true")
+    parser.add_argument("--skip-robustness-gates", action="store_true")
     parser.add_argument("--min-roc-auc", type=float, default=None)
     parser.add_argument("--min-f1", type=float, default=None)
     parser.add_argument("--min-map-at-k", type=float, default=None)
     parser.add_argument("--max-pos-ratio-delta", type=float, default=None)
     parser.add_argument("--max-missing-employee-skills-delta", type=float, default=None)
     parser.add_argument("--max-missing-job-skills-delta", type=float, default=None)
+    parser.add_argument("--max-crash-rate", type=float, default=None)
+    parser.add_argument("--min-schema-valid-rate", type=float, default=None)
     parser.add_argument("--fail-on-gate-fail", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--valid-size", type=float, default=0.2)
@@ -252,10 +256,14 @@ def main():
         gate_overrides.setdefault("drift", {})["report_path"] = str(args.drift_report)
     if args.generalization_report:
         gate_overrides.setdefault("generalization", {})["report_path"] = str(args.generalization_report)
+    if args.robustness_report:
+        gate_overrides.setdefault("robustness", {})["report_path"] = str(args.robustness_report)
     if args.skip_drift_gates:
         gate_overrides.setdefault("drift", {})["enabled"] = False
     if args.skip_generalization_gates:
         gate_overrides.setdefault("generalization", {})["enabled"] = False
+    if args.skip_robustness_gates:
+        gate_overrides.setdefault("robustness", {})["enabled"] = False
     if args.min_roc_auc is not None:
         gate_overrides.setdefault("metrics", {}).setdefault("minimums", {})["roc_auc"] = float(args.min_roc_auc)
     if args.min_f1 is not None:
@@ -268,6 +276,10 @@ def main():
         gate_overrides.setdefault("drift", {}).setdefault("max_abs_delta", {})["missing_employee_skills_delta"] = float(args.max_missing_employee_skills_delta)
     if args.max_missing_job_skills_delta is not None:
         gate_overrides.setdefault("drift", {}).setdefault("max_abs_delta", {})["missing_job_skills_delta"] = float(args.max_missing_job_skills_delta)
+    if args.max_crash_rate is not None:
+        gate_overrides.setdefault("robustness", {}).setdefault("maximums", {})["crash_rate"] = float(args.max_crash_rate)
+    if args.min_schema_valid_rate is not None:
+        gate_overrides.setdefault("robustness", {}).setdefault("minimums", {})["schema_valid_rate"] = float(args.min_schema_valid_rate)
 
     gate_policy = load_gate_policy(args.gates_config, overrides=gate_overrides)
     gate_report = build_promotion_gate_report(metrics=metrics, policy=gate_policy)

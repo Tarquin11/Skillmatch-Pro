@@ -3,6 +3,7 @@ from app.services.cv_parser import (
     detect_skills,
     detect_skills_with_confidence,
     detect_title,
+    extract_text,
 )
 
 
@@ -54,3 +55,16 @@ def test_detect_experience_years_from_keyword_context_years():
         "Working on web APIs\n"
     )
     assert detect_experience_years(text) == 2.0
+
+
+def test_extract_text_unsupported_extension_returns_empty():
+    assert extract_text(b"plain text bytes", "resume.txt") == ""
+
+
+def test_detect_title_returns_none_for_empty_text():
+    assert detect_title("") is None
+
+
+def test_detect_skills_with_empty_known_skills_returns_empty():
+    rows = detect_skills_with_confidence("Python SQL", known_skills=[])
+    assert rows == []

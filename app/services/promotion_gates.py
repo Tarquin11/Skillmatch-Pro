@@ -28,6 +28,20 @@ DEFAULT_GATE_POLICY: dict[str, Any] = {
         "report_path": "artifacts/generalization_report.json",
         "required_scenarios": {}
     },
+    "robustness": {
+        "enabled": False,
+        "report_path": "artifacts/cv_robustness_report.json",
+        "minimums": {
+            "schema_valid_rate": 1.0,
+        },
+        "maximums": {
+            "crash_rate": 0.0,
+        },
+        "advisory_maximums": {
+            "degraded_rate": 0.30,
+        },
+        "tracked": ["degraded_rate", "empty_text_rate"],
+    },
 }
 
 def _safe_float(value: Any) -> float | None:
@@ -249,20 +263,145 @@ def _evaluate_generalization_gates(policy: dict[str, Any]) -> dict[str, Any]:
     return detail
 
 
+def _evaluate_robustness_gates(policy: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(policy.get("enabled", False))
+    report_path = Path(str(policy.get("report_path") or "")).expanduser()
+    minimums = dict(policy.get("minimums") or {})
+    maximums = dict(policy.get("maximums") or {})
+    advisory_maximums = dict(policy.get("advisory_maximums") or {})
+    tracked = [str(item).strip() for item in (policy.get("tracked") or []) if str(item).strip()]
+
+    detail = {
+        "enabled": enabled,
+        "report_path": str(report_path),
+        "thresholds": {
+            "minimums": minimums,
+            "maximums": maximums,
+            "advisory_maximums": advisory_maximums,
+        },
+        "results": {
+            "minimums": {},
+            "maximums": {},
+            "advisory_maximums": {},
+        },
+        "tracked": {},
+        "advisories": [],
+        "passed": False,
+        "skipped": False,
+        "failures": [],
+    }
+
+    if not enabled:
+        detail["passed"] = True
+        detail["skipped"] = True
+        return detail
+
+    if not report_path.exists():
+        detail["failures"].append(f"robustness report_not_found path={report_path}")
+        return detail
+
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        detail["failures"].append(f"robustness report_unreadable path={report_path}")
+        return detail
+
+    if not isinstance(payload, dict):
+        detail["failures"].append(f"robustness report_invalid_json path={report_path}")
+        return detail
+
+    # Accept either top-level KPI keys or nested {"kpis": {...}}.
+    kpis = payload.get("kpis")
+    if isinstance(kpis, dict):
+        source = kpis
+    else:
+        source = payload
+
+    min_passed, min_failures, min_results = _evaluate_minimums(
+        actual=dict(source),
+        minimums=minimums,
+        prefix="robustness",
+    )
+    detail["results"]["minimums"] = min_results
+    detail["failures"].extend(min_failures)
+
+    max_failures: list[str] = []
+    max_results: dict[str, Any] = {}
+    for metric_name, threshold_raw in maximums.items():
+        threshold = _safe_float(threshold_raw)
+        value = _safe_float(source.get(metric_name))
+        passed = threshold is not None and value is not None and value <= threshold
+        max_results[metric_name] = {
+            "value": value,
+            "max_allowed": threshold,
+            "passed": passed,
+        }
+
+        if threshold is None:
+            max_failures.append(f"robustness invalid_threshold metric={metric_name}")
+            continue
+        if value is None:
+            max_failures.append(f"robustness missing_metric metric={metric_name}")
+            continue
+        if value > threshold:
+            max_failures.append(
+                f"robustness metric_gate_failed {metric_name}={value:.6f} > max_allowed={threshold:.6f}"
+            )
+
+    detail["results"]["maximums"] = max_results
+    detail["failures"].extend(max_failures)
+
+    advisory_results: dict[str, Any] = {}
+    advisories: list[str] = []
+    for metric_name, threshold_raw in advisory_maximums.items():
+        threshold = _safe_float(threshold_raw)
+        value = _safe_float(source.get(metric_name))
+        exceeded = threshold is not None and value is not None and value > threshold
+        advisory_results[metric_name] = {
+            "value": value,
+            "advisory_max_allowed": threshold,
+            "exceeded": exceeded,
+        }
+        if threshold is None:
+            advisories.append(f"robustness advisory_invalid_threshold metric={metric_name}")
+            continue
+        if value is None:
+            advisories.append(f"robustness advisory_missing_metric metric={metric_name}")
+            continue
+        if exceeded:
+            advisories.append(
+                f"robustness advisory_threshold_exceeded {metric_name}={value:.6f} > advisory_max={threshold:.6f}"
+            )
+
+    detail["results"]["advisory_maximums"] = advisory_results
+    detail["advisories"] = advisories
+
+    tracked_values: dict[str, float | None] = {}
+    for metric_name in tracked:
+        tracked_values[metric_name] = _safe_float(source.get(metric_name))
+    detail["tracked"] = tracked_values
+
+    detail["passed"] = bool(min_passed) and len(max_failures) == 0 and len(min_failures) == 0
+    return detail
+
+
 def build_promotion_gate_report(*, metrics: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     metric_gates = _evaluate_metric_gates(metrics, dict(policy.get("metrics") or {}))
     drift_gates = _evaluate_drift_gates(dict(policy.get("drift") or {}))
     generalization_gates = _evaluate_generalization_gates(dict(policy.get("generalization") or {}))
+    robustness_gates = _evaluate_robustness_gates(dict(policy.get("robustness") or {}))
 
     failures = []
     failures.extend(metric_gates.get("failures", []))
     failures.extend(drift_gates.get("failures", []))
     failures.extend(generalization_gates.get("failures", []))
+    failures.extend(robustness_gates.get("failures", []))
 
     passed = (
         bool(metric_gates.get("passed", False))
         and bool(drift_gates.get("passed", False))
         and bool(generalization_gates.get("passed", False))
+        and bool(robustness_gates.get("passed", False))
     )
 
     return {
@@ -272,4 +411,5 @@ def build_promotion_gate_report(*, metrics: dict[str, Any], policy: dict[str, An
         "metric_gates": metric_gates,
         "drift_gates": drift_gates,
         "generalization_gates": generalization_gates,
+        "robustness_gates": robustness_gates,
     }
