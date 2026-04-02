@@ -1,0 +1,58 @@
+name: Robustness CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  robustness:
+    name: Robustness Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
+      - name: Run robustness suite
+        run: |
+          mkdir -p artifacts
+          pytest \
+            app/tests/ai/test_cv_parser_robustness.py \
+            app/tests/ai/test_cv_parser_fuzz.py \
+            app/tests/test_candidates_upload_noisy.py \
+            -q 2>&1 | tee artifacts/robustness_pytest.log
+
+      - name: Block on unhandled exceptions in logs
+        run: |
+          if grep -n "unhandled_exception" artifacts/robustness_pytest.log; then
+            echo "Unhandled exception detected in robustness run."
+            exit 1
+          fi
+
+      - name: Upload robustness logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robustness-logs
+          path: artifacts/robustness_pytest.log
