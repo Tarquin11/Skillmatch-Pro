@@ -45,7 +45,7 @@ def _parse_never_crash(**kwargs) -> dict:
     "text",
     [
         "Pythn devloper with 3 yers expreince in SQl and Dockr",
-        "John Doe\njohn@example.com\n+21600000000\nTunisia",
+        "foulen foulani\nfoulen@example.com\n+21600000000\nTunisia",
         "S K I L L S\nP Y T H O N , S Q L\nE X P E R I E N C E\n2 0 2 2 - 2 0 2 4",
         "Experience\nSoftware Engin",
     ],
