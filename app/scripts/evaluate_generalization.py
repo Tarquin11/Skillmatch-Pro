@@ -31,7 +31,17 @@ def _scenario_metrics(
     threshold: float,
 ) -> dict[str, Any]:
     clean = preprocess_training_pairs(pairs)
-    x, y = matcher.feature_engineer.vectorize_pairs(clean)
+    semantic_fallback = None
+    try:
+        x, y = matcher.feature_engineer.vectorize_pairs(clean)
+    except Exception as exc:
+        # Graceful fallback for offline/blocked environments where embedding model
+        # loading can fail at runtime.
+        if not getattr(matcher.feature_engineer, "use_semantic", False):
+            raise
+        matcher.feature_engineer.use_semantic = False
+        x, y = matcher.feature_engineer.vectorize_pairs(clean)
+        semantic_fallback = f"{type(exc).__name__}: {exc}"
     if y is None or len(y) == 0:
         raise ValueError("Scenario has no labels.")
 
@@ -47,7 +57,7 @@ def _scenario_metrics(
     query_ids = [row.get("query_id") or row.get("job_id") or idx for idx, row in enumerate(pairs)]
     ranking = matcher._ranking_metrics(y, y_prob, query_ids=query_ids, k=k)
 
-    return {
+    out = {
         "rows": int(len(y)),
         "roc_auc": float(roc_auc) if roc_auc is not None else None,
         "average_precision": float(avg_pr) if avg_pr is not None else None,
@@ -58,7 +68,11 @@ def _scenario_metrics(
         "recall_at_k": ranking.get("recall_at_k"),
         "map_at_k": ranking.get("map_at_k"),
         "ndcg_at_k": ranking.get("ndcg_at_k"),
+        "semantic_enabled": bool(getattr(matcher.feature_engineer, "use_semantic", False)),
     }
+    if semantic_fallback:
+        out["semantic_fallback"] = semantic_fallback
+    return out
 
 
 def main() -> None:

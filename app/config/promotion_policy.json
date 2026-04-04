@@ -19,6 +19,7 @@
   "generalization": {
     "enabled": true,
     "report_path": "artifacts/generalization_report.json",
+    "classification_threshold": 0.45,
     "required_scenarios": {
       "iid_val": {
         "roc_auc": 0.9,

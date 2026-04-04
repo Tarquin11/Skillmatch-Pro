@@ -39,6 +39,24 @@ def _assert_fresh(path: Path, max_age_hours: float) -> dict[str, float | str]:
         "mtime_utc": mtime.isoformat(),
         "age_hours": round(age_hours, 4),
     }
+
+
+def _resolve_threshold(cli_threshold: float | None, policy: dict[str, object]) -> float:
+    if cli_threshold is not None:
+        return float(cli_threshold)
+
+    generalization_cfg = policy.get("generalization")
+    if isinstance(generalization_cfg, dict):
+        raw = generalization_cfg.get("classification_threshold")
+        try:
+            if raw is not None:
+                return float(raw)
+        except (TypeError, ValueError):
+            pass
+
+    return 0.5
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scheduled evaluation on fresh holdout scenarios.")
     parser.add_argument("--model", default="artifacts/matcher.joblib")
@@ -48,7 +66,7 @@ def main() -> None:
     parser.add_argument("--policy", default="app/config/promotion_policy.json")
     parser.add_argument("--max-holdout-age-hours", type=float, default=36.0)
     parser.add_argument("--k", type=int, default=10)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--no-semantic", action="store_true", help="Disable semantic embeddings for holdout evaluation.")
     args = parser.parse_args()
 
@@ -60,6 +78,9 @@ def main() -> None:
     freshness: dict[str, dict[str, float | str]] = {}
     for name, path in scenarios.items():
         freshness[name] = _assert_fresh(path, max_age_hours=float(args.max_holdout_age_hours))
+
+    base_policy = load_gate_policy(args.policy)
+    threshold = _resolve_threshold(args.threshold, base_policy)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -77,7 +98,7 @@ def main() -> None:
         "--k",
         str(int(args.k)),
         "--threshold",
-        str(float(args.threshold)),
+        str(float(threshold)),
         "--out",
         str(versioned_report),
     ]
