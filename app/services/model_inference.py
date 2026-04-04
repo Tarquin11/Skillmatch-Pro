@@ -171,7 +171,7 @@ class ModelInferenceService:
             return cls._CANARY_MATCHER
         
         cls._CANARY_LOAD_ATTEMTED = True
-        if not cls._CANARY_LOAD_PATH.exists():
+        if not cls._CANARY_MODEL_PATH.exists():
             logger.warning ("ai_canary_model_missing path=%s", cls._CANARY_MODEL_PATH)
             return None
         

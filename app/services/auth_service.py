@@ -76,7 +76,19 @@ def create_user(db: Session, user: UserCreate):
     if db_user:
         raise HTTPException(status_code=400, detail={"code": "email_already_registered", "message": "Email already registered"})
     is_first_user = db.query(User.id).first() is None
-    role = user.role if user.role is not None else ("admin" if is_first_user else "user")
+    requested_role = user.role
+    if is_first_user:
+        role = requested_role if requested_role is not None else "admin"
+    else:
+        if requested_role == "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "admin_signup_forbidden",
+                    "message": "Admin role cannot be self-assigned",
+                },
+            )
+        role = requested_role if requested_role is not None else "user"
     hashed_pwd = get_password_hash(user.password)
     new_user = User(email=user.email, hashed_password=hashed_pwd, role=role)
     db.add(new_user)

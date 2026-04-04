@@ -67,6 +67,7 @@ def main() -> None:
     parser.add_argument("--scenario", action="append", required=True, help="name=path_to_jsonl_or_json")
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--no-semantic", action="store_true", help="Disable semantic embedding features during evaluation.")
     parser.add_argument("--out", default="artifacts/generalization_report.json")
     args = parser.parse_args()
 
@@ -74,12 +75,15 @@ def main() -> None:
     if not model_path.exists():
         raise FileNotFoundError(f"Model artifact not found: {model_path}")
     matcher = CandidateMatcher.load(model_path)
+    if args.no_semantic and getattr(matcher, "feature_engineer", None) is not None:
+        matcher.feature_engineer.use_semantic = False
     scenario_map = _parse_scenarios(args.scenario)
     payload: dict[str, Any] = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "model_path": str(model_path),
         "k": int(args.k),
         "threshold": float(args.threshold),
+        "semantic_enabled": bool(getattr(getattr(matcher, "feature_engineer", None), "use_semantic", False)),
         "scenarios": {},
     }
     for name, path in scenario_map.items():

@@ -49,6 +49,7 @@ def main() -> None:
     parser.add_argument("--max-holdout-age-hours", type=float, default=36.0)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--no-semantic", action="store_true", help="Disable semantic embeddings for holdout evaluation.")
     args = parser.parse_args()
 
     model_path = Path(args.model)
@@ -80,6 +81,8 @@ def main() -> None:
         "--out",
         str(versioned_report),
     ]
+    if args.no_semantic:
+        cmd.append("--no-semantic")
     for name, path in scenarios.items():
         cmd.extend(["--scenario", f"{name}={path}"])
 
