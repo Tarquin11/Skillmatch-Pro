@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.security import create_access_token,generate_refresh_token,get_password_hash,hash_token,verify_password
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.schemas.user import UserCreate
+from app.schemas.user import UserCreate, UserRole
 
 _LOGIN_BUCKETS: dict[str, Deque[float]] = defaultdict(deque)
 
@@ -16,6 +16,50 @@ def _now_utc() -> datetime:
 
 def _rate_key(email: str, client_ip: str) -> str:
     return f"{email.strip().lower()}|{client_ip or 'unknown'}"
+
+def update_user_role(
+    db: Session,
+    *,
+    actor_user_id: int,
+    target_user_id: int,
+    new_role: UserRole,
+) -> User:
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "user_not_found", "message": "User not found"},
+        )
+
+    if target_user.role == new_role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "role_unchanged", "message": "User already has this role"},
+        )
+
+    # Prevent accidental self-lockout of current admin session
+    if actor_user_id == target_user.id and target_user.role == "admin" and new_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "self_admin_demotion_forbidden", "message": "Admin cannot demote self"},
+        )
+
+    # Ensure at least one admin remains
+    if target_user.role == "admin" and new_role != "admin":
+        another_admin = db.query(User.id).filter(User.role == "admin", User.id != target_user.id).first()
+        if not another_admin:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "last_admin_demotion_forbidden", "message": "At least one admin is required"},
+            )
+
+    target_user.role = new_role
+    target_user.token_version = int(target_user.token_version or 0) + 1
+
+    db.add(target_user)
+    db.commit()
+    db.refresh(target_user)
+    return target_user
 
 def _apply_login_rate_limit(email: str, client_ip: str) -> None:
     now_ts = _now_utc().timestamp()

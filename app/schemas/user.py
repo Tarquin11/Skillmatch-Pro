@@ -24,3 +24,6 @@ class Token(StrictBaseModel):
 
 class TokenRefreshRequest(StrictBaseModel):
     refresh_token: str
+
+class UserRoleUpdateRequest(StrictBaseModel):
+    role: UserRole

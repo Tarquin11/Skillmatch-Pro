@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.user import User
-from app.schemas.user import Token, TokenRefreshRequest, UserCreate, UserResponse
+from app.schemas.user import Token, TokenRefreshRequest, UserCreate, UserResponse, UserRoleUpdateRequest
 from app.services import auth_service
 from app.core.rbac import roles_for_policy
 
@@ -92,3 +92,17 @@ def require_policy(policy: str) -> Callable:
             )
         return current_user
     return policy_checker
+
+@router.patch("/update-role/{user_id}", response_model=UserResponse)
+def patch_user_role(
+    user_id: int,
+    role_update: UserRoleUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    return auth_service.update_user_role(
+        db,
+        actor_user_id=current_user.id,
+        target_user_id=user_id,
+        new_role=role_update.role,
+    )
