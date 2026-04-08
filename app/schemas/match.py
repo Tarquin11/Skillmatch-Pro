@@ -6,7 +6,7 @@ class JobMatchRequest(StrictBaseModel):
     job_title: str
     required_skills: List[str] = []
     min_experience: int = Field(default=0, ge=0)
-    limit: int = Field(default=20, ge=1, le=200)
+    limit: int = Field(default=20, ge=1, le=2000)
 
 class LearningRecommendationOut(StrictBaseModel):
     missing_skill: str
@@ -31,4 +31,12 @@ class JobMatchResponse(StrictBaseModel):
     job_title: str
     required_skills: List[str]
     min_experience: int
-    results: List[MatchCandidateOut] 
+    results: List[MatchCandidateOut]
+    total_results: int = 0
+    page: int = 1
+    page_size: int = 20
+    total_pages: int = 1
+    has_next: bool = False
+    has_prev: bool = False
+    sort_by: str = "score"
+    sort_direction: str = "desc"

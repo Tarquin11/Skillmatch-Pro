@@ -1,7 +1,15 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load environment from explicit path to ensure it's found when running as a module
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# Set HF token if available
+hf_token = os.getenv("HF_TOKEN", "").strip()
+if hf_token:
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
 
 def _get_required_env(name: str) -> str:
     value = os.getenv(name)

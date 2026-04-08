@@ -67,17 +67,110 @@ def _extract_metrics(payload: dict[str, Any]) -> dict[str, float | None]:
             continue
     return metrics
 
+def _read_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("ai_json_read_failure path=%s", path)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def _latest_file(paths: list[Path]) -> Path | None:
+    existing = [p for p in paths if p.exists()]
+    if not existing:
+        return None
+    return max(existing, key=lambda p: p.stat().st_mtime)
+
+def _collect_generalization_eval(model_path: Path) -> dict[str, Any]:
+    artifact_dir = model_path.parent
+    eval_dir = artifact_dir / "evaluations"
+    candidates: list[Path] = [artifact_dir / "generalization_report.json"]
+    if eval_dir.exists():
+        candidates.extend(sorted(eval_dir.glob("generalization_report_*.json")))
+    latest = _latest_file(candidates)
+    if latest is None:
+        return {"path": None, "generated_at_utc": None, "scheduled_generated_at_utc": None}
+
+    payload = _read_json_payload(latest)
+    scheduled = payload.get("scheduled_eval") if isinstance(payload.get("scheduled_eval"), dict) else {}
+    return {
+        "path": str(latest),
+        "generated_at_utc": str(payload.get("generated_at_utc")) if payload.get("generated_at_utc") is not None else None,
+        "scheduled_generated_at_utc": str(scheduled.get("generated_at_utc")) if scheduled.get("generated_at_utc") is not None else None,
+    }
+
+def _collect_generalization_gate(model_path: Path) -> dict[str, Any]:
+    artifact_dir = model_path.parent
+    eval_dir = artifact_dir / "evaluations"
+    candidates: list[Path] = [artifact_dir / "generalization_gate.json"]
+    if eval_dir.exists():
+        candidates.extend(sorted(eval_dir.glob("generalization_gate_*.json")))
+    latest = _latest_file(candidates)
+    if latest is None:
+        return {"path": None, "checked_at_utc": None, "passed": None}
+
+    payload = _read_json_payload(latest)
+    passed_raw = payload.get("passed")
+    passed = bool(passed_raw) if isinstance(passed_raw, bool) else None
+    return {
+        "path": str(latest),
+        "checked_at_utc": str(payload.get("checked_at_utc")) if payload.get("checked_at_utc") is not None else None,
+        "passed": passed,
+    }
+
+def _extract_gate_statuses(metrics_payload: dict[str, Any]) -> dict[str, Any]:
+    gate = metrics_payload.get("promotion_gate")
+    if not isinstance(gate, dict):
+        return {
+            "promotion_gate_checked_at_utc": None,
+            "promotion_gate_passed": None,
+            "metric_gate_passed": None,
+            "drift_gate_passed": None,
+            "generalization_gate_passed": None,
+            "robustness_gate_passed": None,
+        }
+
+    def _sub_gate_passed(name: str) -> bool | None:
+        sub = gate.get(name)
+        if not isinstance(sub, dict):
+            return None
+        value = sub.get("passed")
+        return bool(value) if isinstance(value, bool) else None
+
+    overall = gate.get("passed")
+    return {
+        "promotion_gate_checked_at_utc": str(gate.get("checked_at_utc")) if gate.get("checked_at_utc") is not None else None,
+        "promotion_gate_passed": bool(overall) if isinstance(overall, bool) else None,
+        "metric_gate_passed": _sub_gate_passed("metric_gates"),
+        "drift_gate_passed": _sub_gate_passed("drift_gates"),
+        "generalization_gate_passed": _sub_gate_passed("generalization_gates"),
+        "robustness_gate_passed": _sub_gate_passed("robustness_gates"),
+    }
+
 
 def _enrich_model_info(model_path: Path, metadata: dict[str, Any]) -> dict[str, Any]:
     metrics_payload = _load_metrics_payload(model_path)
 
     dataset_version = metrics_payload.get("dataset_version") or metadata.get("dataset_version")
     trained_at_utc = metrics_payload.get("trained_at_utc") or metadata.get("trained_at_utc")
+    gate_fields = _extract_gate_statuses(metrics_payload)
+    generalization_eval = _collect_generalization_eval(model_path)
+    generalization_gate = _collect_generalization_gate(model_path)
 
     return {
         "dataset_version": str(dataset_version) if dataset_version is not None else None,
         "trained_at_utc": str(trained_at_utc) if trained_at_utc is not None else None,
         "metrics": _extract_metrics(metrics_payload),
+        "promotion_gate_checked_at_utc": gate_fields["promotion_gate_checked_at_utc"],
+        "promotion_gate_passed": gate_fields["promotion_gate_passed"],
+        "metric_gate_passed": gate_fields["metric_gate_passed"],
+        "drift_gate_passed": gate_fields["drift_gate_passed"],
+        "generalization_gate_passed": gate_fields["generalization_gate_passed"],
+        "robustness_gate_passed": gate_fields["robustness_gate_passed"],
+        "last_generalization_eval_at_utc": generalization_eval["generated_at_utc"],
+        "last_generalization_scheduled_eval_at_utc": generalization_eval["scheduled_generated_at_utc"],
+        "last_generalization_gate_checked_at_utc": generalization_gate["checked_at_utc"],
+        "last_generalization_gate_passed": generalization_gate["passed"],
     }
 
 def _normalize_model_path(path: str | Path) -> Path:
@@ -138,6 +231,16 @@ def get_model_info(path: str | Path) -> dict[str, Any]:
             "dataset_version": None,
             "trained_at_utc": None,
             "metrics":{},
+            "promotion_gate_checked_at_utc": None,
+            "promotion_gate_passed": None,
+            "metric_gate_passed": None,
+            "drift_gate_passed": None,
+            "generalization_gate_passed": None,
+            "robustness_gate_passed": None,
+            "last_generalization_eval_at_utc": None,
+            "last_generalization_scheduled_eval_at_utc": None,
+            "last_generalization_gate_checked_at_utc": None,
+            "last_generalization_gate_passed": None,
             "metadata": {},
         }
 
@@ -159,12 +262,32 @@ def get_model_info(path: str | Path) -> dict[str, Any]:
         "dataset_version": None,
         "trained_at_utc": None,
         "metrics":{},
+        "promotion_gate_checked_at_utc": None,
+        "promotion_gate_passed": None,
+        "metric_gate_passed": None,
+        "drift_gate_passed": None,
+        "generalization_gate_passed": None,
+        "robustness_gate_passed": None,
+        "last_generalization_eval_at_utc": None,
+        "last_generalization_scheduled_eval_at_utc": None,
+        "last_generalization_gate_checked_at_utc": None,
+        "last_generalization_gate_passed": None,
     }
 
     return {
         "dataset_version": enriched["dataset_version"],
         "trained_at_utc":enriched["trained_at_utc"],
         "metrics": enriched["metrics"],
+        "promotion_gate_checked_at_utc": enriched["promotion_gate_checked_at_utc"],
+        "promotion_gate_passed": enriched["promotion_gate_passed"],
+        "metric_gate_passed": enriched["metric_gate_passed"],
+        "drift_gate_passed": enriched["drift_gate_passed"],
+        "generalization_gate_passed": enriched["generalization_gate_passed"],
+        "robustness_gate_passed": enriched["robustness_gate_passed"],
+        "last_generalization_eval_at_utc": enriched["last_generalization_eval_at_utc"],
+        "last_generalization_scheduled_eval_at_utc": enriched["last_generalization_scheduled_eval_at_utc"],
+        "last_generalization_gate_checked_at_utc": enriched["last_generalization_gate_checked_at_utc"],
+        "last_generalization_gate_passed": enriched["last_generalization_gate_passed"],
         "model_loaded": bool(loaded_for_requested_path),
         "artifact_exists": bool(artifact_exists),
         "model_path": str(model_path),

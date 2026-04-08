@@ -26,3 +26,16 @@ def test_rbac_user_cannot_create_skill(client, user_auth):
 def test_rbac_admin_can_create_skill(client, admin_auth):
     r = client.post("/skills/", headers=admin_auth, json={"name": "PyTest Skill"})
     assert r.status_code == 201
+
+
+def test_admin_can_list_users(client, admin_auth):
+    r = client.get("/auth/users", headers=admin_auth)
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, list)
+    assert len(body) >= 1
+
+
+def test_non_admin_cannot_list_users(client, user_auth):
+    r = client.get("/auth/users", headers=user_auth)
+    assert r.status_code == 403

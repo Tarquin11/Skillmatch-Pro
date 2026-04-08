@@ -3,12 +3,25 @@ import argparse
 from html import parser
 from html import parser
 import json
+import os
 import shutil
 from typing import Any
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
+from dotenv import load_dotenv
+
+# Load environment before importing modules that may initialize HF clients/models.
+# Use explicit path to ensure .env is found when running as a module
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+# Set HF token environment variables
+hf_token = os.getenv("HF_TOKEN", "").strip()
+if hf_token:
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = hf_token
+
 from app.ai.matcher import CandidateMatcher
 from app.scripts.train_matcher import load_pairs
 from app.services.promotion_gates import build_promotion_gate_report, load_gate_policy

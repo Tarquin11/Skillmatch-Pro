@@ -81,6 +81,14 @@ def require_roles(*allowed_roles: str) -> Callable:
 def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
+@router.get("/users", response_model=list[UserResponse])
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    _ = current_user
+    return db.query(User).order_by(User.id.asc()).all()
+
 def require_policy(policy: str) -> Callable:
     allowed_roles = roles_for_policy(policy)
 

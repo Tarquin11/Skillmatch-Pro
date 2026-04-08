@@ -11,7 +11,9 @@ class UserCreate(StrictBaseModel):
 
 class UserResponse(StrictBaseModel):
     id: int
-    email: EmailStr
+    # Keep response tolerant for legacy seeded records (e.g. *.local),
+    # while UserCreate remains strict with EmailStr validation.
+    email: str
     is_active: bool
     role: UserRole
     model_config = ConfigDict(from_attributes=True, extra="forbid")
