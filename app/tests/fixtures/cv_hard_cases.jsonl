@@ -1,0 +1,6 @@
+{"id":"hard-001","text":"S K I L L S\n- Kali Linux\n- Web Exploitation","must_include_skills":["kali linux","web exploitation"],"must_not_include_skills":[],"must_include_languages":[],"must_not_include_languages":[]}
+{"id":"hard-002","text":"T O O L S\n- SQL\n- Docker","must_include_skills":["sql","docker"],"must_not_include_skills":["t o o l s"],"must_include_languages":[],"must_not_include_languages":[]}
+{"id":"hard-003","text":"LANGUES\n- Francais (B1)\n- Anglais (B2)","must_include_skills":[],"must_not_include_skills":["francais","anglais"],"must_include_languages":["french","english"],"must_not_include_languages":[]}
+{"id":"hard-004","text":"5 January - 20 February 2025 web exploitation","must_include_skills":[],"must_not_include_skills":["5 january - 20 february 2025 web exploitation","january"],"must_include_languages":[],"must_not_include_languages":[]}
+{"id":"hard-005","text":"implementation of a gps-based bus geolocation","must_include_skills":[],"must_not_include_skills":["implementation of a gps based bus geolocation","gps based bus geolocation"],"must_include_languages":[],"must_not_include_languages":[]}
+{"id":"hard-006","text":"COMPETENCES TECHNIQUES\n- React / Flask","must_include_skills":["react","flask"],"must_not_include_skills":[],"must_include_languages":[],"must_not_include_languages":[]}

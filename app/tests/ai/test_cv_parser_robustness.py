@@ -15,6 +15,12 @@ def _assert_safe_contract(payload: dict) -> None:
         "warnings",
         "text_length",
         "skills",
+        "skills_grouped",
+        "skill_hierarchy",
+        "skill_graph",
+        "extracted_languages",
+        "language_details",
+        "extraction_channels",
         "preview",
         "extracted_skills",
         "predicted_title",
@@ -26,6 +32,12 @@ def _assert_safe_contract(payload: dict) -> None:
     assert isinstance(payload["errors"], list)
     assert isinstance(payload["warnings"], list)
     assert isinstance(payload["skills"], list)
+    assert isinstance(payload["skills_grouped"], dict)
+    assert isinstance(payload["skill_hierarchy"], list)
+    assert isinstance(payload["skill_graph"], dict)
+    assert isinstance(payload["extracted_languages"], list)
+    assert isinstance(payload["language_details"], list)
+    assert isinstance(payload["extraction_channels"], dict)
     assert isinstance(payload["preview"], str)
     assert isinstance(payload["text_length"], int)
     assert payload["text_length"] >= 0

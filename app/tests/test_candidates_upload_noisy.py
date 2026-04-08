@@ -10,6 +10,12 @@ def _assert_upload_contract(body: dict) -> None:
         "warnings",
         "text_length",
         "skills",
+        "skills_grouped",
+        "skill_hierarchy",
+        "skill_graph",
+        "extracted_languages",
+        "language_details",
+        "extraction_channels",
         "preview",
         "extracted_skills",
         "predicted_title",
@@ -21,6 +27,12 @@ def _assert_upload_contract(body: dict) -> None:
     assert isinstance(body["errors"], list)
     assert isinstance(body["warnings"], list)
     assert isinstance(body["skills"], list)
+    assert isinstance(body["skills_grouped"], dict)
+    assert isinstance(body["skill_hierarchy"], list)
+    assert isinstance(body["skill_graph"], dict)
+    assert isinstance(body["extracted_languages"], list)
+    assert isinstance(body["language_details"], list)
+    assert isinstance(body["extraction_channels"], dict)
     assert isinstance(body["extracted_skills"], list)
     assert isinstance(body["preview"], str)
     assert isinstance(body["text_length"], int)

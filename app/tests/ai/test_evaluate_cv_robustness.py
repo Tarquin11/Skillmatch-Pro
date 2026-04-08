@@ -16,8 +16,24 @@ def _valid_payload(*, degraded: bool = False, empty_text: bool = False) -> dict:
         "warnings": warnings,
         "text_length": 0 if empty_text else 42,
         "skills": ["python"],
+        "skills_grouped": {"technical": ["python"], "management": [], "business": [], "soft-skills": [], "other": []},
+        "skill_hierarchy": [],
+        "skill_graph": {},
+        "extracted_languages": [],
+        "language_details": [],
+        "extraction_channels": {
+            "catalog_match": ["python"],
+            "open_vocab": [],
+            "soft_skill": [],
+            "sentence": [],
+            "semantic_augment": [],
+            "language": [],
+            "project_text": [],
+        },
         "preview": "test",
-        "extracted_skills": [{"skill": "python", "confidence": 0.9, "source": "exact"}],
+        "extracted_skills": [
+            {"skill": "python", "confidence": 0.9, "confidence_normalized": 1.0, "source": "exact", "evidence": []}
+        ],
         "predicted_title": "Developer",
         "predicted_experience_years": 2.0,
     }

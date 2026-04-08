@@ -106,6 +106,8 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             known_skills=known_skills,
             min_confidence=0.6,
             use_semantic=False,
+            use_hf_ner=True,
+            use_semantic_augment=True,
         )
 
         return CandidateUploadRespose(
@@ -116,6 +118,12 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             warnings=parsed["warnings"],
             text_length=parsed["text_length"],
             skills=parsed["skills"],
+            skills_grouped=parsed["skills_grouped"],
+            skill_hierarchy=parsed["skill_hierarchy"],
+            skill_graph=parsed["skill_graph"],
+            extracted_languages=parsed["extracted_languages"],
+            language_details=parsed["language_details"],
+            extraction_channels=parsed["extraction_channels"],
             extracted_skills=parsed["extracted_skills"],
             preview=parsed["preview"],
             predicted_title=parsed["predicted_title"],
