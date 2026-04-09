@@ -242,6 +242,13 @@ MAX_SECTION_PHRASES = 1_200
 MAX_PHRASE_CHARS = 180
 MAX_KNOWN_SKILLS = 5_000
 DEFAULT_SKILL_TIME_BUDGET_SECONDS = 0.75
+LAYOUT_SHORT_TEXT_FILE_BYTES_THRESHOLD = 30_000
+LAYOUT_SHORT_TEXT_NONSPACE_THRESHOLD = 120
+LAYOUT_COLUMN_MIN_LINES = 24
+LAYOUT_COLUMN_SHORT_LINE_WORDS = 3
+LAYOUT_COLUMN_SHORT_LINE_RATIO = 0.72
+LAYOUT_LETTER_SPACED_MIN_LINES = 10
+LAYOUT_LETTER_SPACED_RATIO = 0.35
 
 
 def _is_skill_heading(section_key: str) -> bool:
@@ -1387,6 +1394,53 @@ def _normalize_for_pattern(text: str) -> str:
     return unicodedata.normalize("NFKD", low).encode("ascii", "ignore").decode("ascii")
 
 
+def _layout_quality_assessment(
+    *,
+    text: str,
+    filename: str,
+    file_bytes_len: int,
+) -> tuple[bool, list[str]]:
+    """Heuristic extraction quality checks for PDF/Word layout degradation.
+
+    Returns `(degraded, warnings)` while keeping logic conservative:
+    only trigger severe checks for realistically large source files.
+    """
+    warnings: list[str] = []
+    degraded = False
+
+    name = (filename or "").lower()
+    is_layout_sensitive = name.endswith(".pdf") or name.endswith(".docx") or name.endswith(".doc")
+    if not is_layout_sensitive:
+        return False, warnings
+
+    nonspace_len = len(re.sub(r"\s+", "", text or ""))
+    if (
+        file_bytes_len >= LAYOUT_SHORT_TEXT_FILE_BYTES_THRESHOLD
+        and nonspace_len < LAYOUT_SHORT_TEXT_NONSPACE_THRESHOLD
+    ):
+        warnings.append("extraction_suspect_too_short")
+        degraded = True
+
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln and ln.strip()]
+    if len(lines) >= LAYOUT_COLUMN_MIN_LINES:
+        word_counts = [max(1, len(_tokenize(_normalize_for_pattern(ln)))) for ln in lines]
+        short_ratio = sum(1 for c in word_counts if c <= LAYOUT_COLUMN_SHORT_LINE_WORDS) / max(1, len(word_counts))
+        letter_spaced_ratio = sum(1 for ln in lines if _looks_like_letter_spaced_text(ln)) / max(1, len(lines))
+
+        if short_ratio >= LAYOUT_COLUMN_SHORT_LINE_RATIO:
+            warnings.append("layout_column_fragmentation_suspected")
+            degraded = True
+        if len(lines) >= LAYOUT_LETTER_SPACED_MIN_LINES and letter_spaced_ratio >= LAYOUT_LETTER_SPACED_RATIO:
+            warnings.append("ocr_like_spacing_detected")
+            degraded = True
+
+    if degraded:
+        warnings.append("ocr_or_table_extraction_recommended")
+
+    # Keep stable order and no duplicates.
+    return degraded, list(dict.fromkeys(warnings))
+
+
 def _is_bullet_line(raw: str) -> bool:
     line = (raw or "").strip()
     return line.startswith(BULLET_PREFIXES)
@@ -2399,6 +2453,17 @@ def parse_cv_safe(
 
     result["text_length"] = len(text)
     result["preview"] = text[:200]
+
+    layout_degraded, layout_warnings = _layout_quality_assessment(
+        text=text,
+        filename=safe_filename,
+        file_bytes_len=len(safe_bytes),
+    )
+    if layout_degraded:
+        result["degraded"] = True
+    for w in layout_warnings:
+        if w not in result["warnings"]:
+            result["warnings"].append(w)
 
     if not text.strip():
         result["degraded"] = True
