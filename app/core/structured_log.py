@@ -11,6 +11,7 @@ EVENT_AI_PREDICTION_FAILURE = "ai_prediction_failure"
 EVENT_AI_FALLBACK_USED = "ai_fallback_used"
 EVENT_CV_PARSE_FAILURE = "cv_parse_failure"
 EVENT_CV_PARSE_FALLBACK = "cv_parse_fallback"
+EVENT_CV_PARSE_METRICS = "cv_parse_metrics"
 
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):

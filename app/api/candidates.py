@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 import zipfile
 from typing import Any
 
@@ -8,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.ai.skill_canonicalization import canonicalize_skill
 from app.api.auth import get_current_active_user
+from app.core.config import settings
 from app.core.structured_log import (
     EVENT_CV_PARSE_FAILURE,
+    EVENT_CV_PARSE_METRICS,
     REASON_PARSING_FAIL,
     log_structured_event,
 )
@@ -132,16 +135,56 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
         skill_rows = [(int(sid), str(name)) for sid, name in db.query(Skill.id, Skill.name).all() if name]
         known_skills = [name for _sid, name in skill_rows]
         skill_id_index = _build_skill_id_index(skill_rows)
+
+        parse_started = time.perf_counter()
         parsed = parse_cv_safe(
             file_bytes=contents,
             filename=safe_name,
             known_skills=known_skills,
-            min_confidence=0.6,
-            use_semantic=False,
-            use_hf_ner=True,
-            use_semantic_augment=True,
+            min_confidence=float(settings.CV_PARSER_MIN_CONFIDENCE),
+            use_semantic=bool(settings.CV_PARSER_USE_SEMANTIC),
+            use_hf_ner=bool(settings.CV_PARSER_USE_HF_NER),
+            use_semantic_augment=bool(settings.CV_PARSER_USE_SEMANTIC_AUGMENT),
+            skill_time_budget_seconds=float(settings.CV_PARSER_SKILL_TIME_BUDGET_SECONDS),
         )
+        parse_duration_ms = int((time.perf_counter() - parse_started) * 1000)
+        slo_ms = int(settings.CV_PARSER_SLO_MS)
+        slo_violation = parse_duration_ms > slo_ms
+        if slo_violation and isinstance(parsed, dict):
+            warnings = parsed.setdefault("warnings", [])
+            if isinstance(warnings, list) and "parse_slo_exceeded" not in warnings:
+                warnings.append("parse_slo_exceeded")
         extracted_with_ids = _attach_skill_ids(parsed.get("extracted_skills", []), skill_id_index)
+
+        extraction_channels = parsed.get("extraction_channels", {})
+        channel_counts: dict[str, int] = {}
+        if isinstance(extraction_channels, dict):
+            for key, value in extraction_channels.items():
+                channel_counts[str(key)] = len(value) if isinstance(value, list) else 0
+
+        log_structured_event(
+            logger,
+            level=logging.INFO,
+            event=EVENT_CV_PARSE_METRICS,
+            filename=file.filename,
+            mime=sniffed,
+            size_bytes=len(contents),
+            parser_model_version=str(settings.CV_PARSER_MODEL_VERSION),
+            duration_ms=parse_duration_ms,
+            slo_ms=slo_ms,
+            slo_violation=bool(slo_violation),
+            degraded=bool(parsed.get("degraded", False)),
+            ok=bool(parsed.get("ok", False)),
+            warnings_count=len(parsed.get("warnings", []) if isinstance(parsed.get("warnings"), list) else []),
+            errors_count=len(parsed.get("errors", []) if isinstance(parsed.get("errors"), list) else []),
+            extracted_skill_count=len(extracted_with_ids),
+            extracted_language_count=len(parsed.get("extracted_languages", []) if isinstance(parsed.get("extracted_languages"), list) else []),
+            channel_counts=channel_counts,
+            use_semantic=bool(settings.CV_PARSER_USE_SEMANTIC),
+            use_hf_ner=bool(settings.CV_PARSER_USE_HF_NER),
+            use_semantic_augment=bool(settings.CV_PARSER_USE_SEMANTIC_AUGMENT),
+            skill_time_budget_seconds=float(settings.CV_PARSER_SKILL_TIME_BUDGET_SECONDS),
+        )
 
         return CandidateUploadRespose(
             filename=file.filename,

@@ -120,3 +120,75 @@ def test_upload_cv_enriches_skill_ids_from_catalog(client, admin_auth, monkeypat
     assert by_skill[skill_python]["skill_id"] == sid_python
     assert by_skill[skill_sql]["skill_id"] == sid_sql
     assert by_skill["graphql"]["skill_id"] is None
+
+
+def test_upload_cv_uses_feature_flags_and_logs_metrics(client, admin_auth, monkeypatch):
+    captured_kwargs: dict = {}
+
+    def _fake_parse(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "ok": True,
+            "degraded": False,
+            "errors": [],
+            "warnings": [],
+            "text_length": 80,
+            "skills": [],
+            "skills_grouped": {"technical": [], "management": [], "business": [], "soft-skills": [], "other": []},
+            "skill_hierarchy": [],
+            "skill_graph": {},
+            "extracted_languages": [],
+            "language_details": [],
+            "extraction_channels": {
+                "catalog_match": [],
+                "open_vocab": [],
+                "soft_skill": [],
+                "sentence": [],
+                "semantic_augment": [],
+                "language": [],
+                "project_text": [],
+            },
+            "preview": "ok",
+            "extracted_skills": [],
+            "predicted_title": None,
+            "predicted_experience_years": None,
+        }
+
+    metrics_events: list[dict] = []
+    monkeypatch.setattr(candidates_api, "parse_cv_safe", _fake_parse, raising=False)
+    monkeypatch.setattr(candidates_api, "log_structured_event", lambda *_a, **kw: metrics_events.append(kw), raising=False)
+
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_MIN_CONFIDENCE", 0.55, raising=False)
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_USE_SEMANTIC", True, raising=False)
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_USE_HF_NER", False, raising=False)
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_USE_SEMANTIC_AUGMENT", False, raising=False)
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_SKILL_TIME_BUDGET_SECONDS", 0.33, raising=False)
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_MODEL_VERSION", "cv_parser_ops_v1", raising=False)
+    monkeypatch.setattr(candidates_api.settings, "CV_PARSER_SLO_MS", 5, raising=False)
+
+    state = {"n": 0}
+
+    def _fake_perf_counter() -> float:
+        state["n"] += 1
+        # Every call advances by 30ms so any measured segment is >= 30ms.
+        return 100.0 + (0.03 * state["n"])
+
+    monkeypatch.setattr(candidates_api.time, "perf_counter", _fake_perf_counter)
+
+    files = {"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")}
+    r = client.post("/candidates/upload_cv", headers=admin_auth, files=files)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    _assert_upload_contract(body)
+    assert "parse_slo_exceeded" in body["warnings"]
+
+    assert captured_kwargs["min_confidence"] == 0.55
+    assert captured_kwargs["use_semantic"] is True
+    assert captured_kwargs["use_hf_ner"] is False
+    assert captured_kwargs["use_semantic_augment"] is False
+    assert captured_kwargs["skill_time_budget_seconds"] == 0.33
+
+    metric_logs = [e for e in metrics_events if e.get("event") == "cv_parse_metrics"]
+    assert metric_logs, "expected cv_parse_metrics structured log"
+    assert metric_logs[-1]["parser_model_version"] == "cv_parser_ops_v1"
+    assert metric_logs[-1]["slo_violation"] is True

@@ -2380,6 +2380,7 @@ def parse_cv_safe(
     use_semantic: bool = False,
     use_hf_ner: bool = False,
     use_semantic_augment: bool = False,
+    skill_time_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     safe_filename = filename if isinstance(filename, str) else str(filename or "")
     safe_bytes: bytes
@@ -2501,9 +2502,12 @@ def parse_cv_safe(
         result["errors"].append(_stage_error("extract_languages_from_sections", exc))
 
     try:
-        skill_budget = DEFAULT_SKILL_TIME_BUDGET_SECONDS
-        if len(text) > 80_000:
-            skill_budget = 0.20
+        if skill_time_budget_seconds is None:
+            skill_budget = DEFAULT_SKILL_TIME_BUDGET_SECONDS
+            if len(text) > 80_000:
+                skill_budget = 0.20
+        else:
+            skill_budget = max(0.05, float(skill_time_budget_seconds))
         start = time.perf_counter()
         rows: list[dict[str, Any]] = []
         if skills_list:
