@@ -1856,39 +1856,53 @@ def _source_channel_family(source: str) -> str:
 def _merge_skill_rows(
     catalog_rows: list[dict[str, Any]], extra_rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    best: dict[str, dict[str, Any]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for r in catalog_rows + extra_rows:
         if not isinstance(r, dict) or not r.get("skill"):
             continue
         k = _skill_key(str(r["skill"]))
         if not k:
             continue
-        kind = _source_channel_family(str(r.get("source", "")))
-        prev = best.get(k)
-        try:
-            sc = float(r.get("confidence", 0))
-        except Exception:
-            sc = 0.0
-        if prev is None:
-            nr = dict(r)
-            nr["_conf_channels"] = {kind}
-            best[k] = nr
+        grouped.setdefault(k, []).append(dict(r))
+
+    fused: list[dict[str, Any]] = []
+    for _k, rows in grouped.items():
+        if not rows:
             continue
-        try:
-            ps = float(prev.get("confidence", 0))
-        except Exception:
-            ps = 0.0
-        pchannels = set(prev.get("_conf_channels") or [])
-        if not pchannels:
-            pchannels = {_source_channel_family(str(prev.get("source", "")))}
-        pchannels.add(kind)
-        if sc > ps:
-            nr = dict(r)
-            nr["_conf_channels"] = pchannels
-            best[k] = nr
-        else:
-            prev["_conf_channels"] = pchannels
-    return sorted(best.values(), key=lambda row: (-float(row["confidence"]), str(row["skill"])))
+
+        def _score(row: dict[str, Any]) -> float:
+            try:
+                return float(row.get("confidence", 0))
+            except Exception:
+                return 0.0
+
+        best_row = max(rows, key=_score)
+        best_score = _score(best_row)
+
+        channels: set[str] = set()
+        evidence: list[str] = []
+        for row in rows:
+            channels.add(_source_channel_family(str(row.get("source", ""))))
+            for ev in row.get("evidence") or []:
+                if not ev:
+                    continue
+                frag = _trim_evidence_fragment(str(ev), max_len=120)
+                if frag and frag not in evidence:
+                    evidence.append(frag)
+
+        # Consolidate confidence from mention multiplicity + channel diversity.
+        mention_bonus = min(0.08, max(0, len(rows) - 1) * 0.02)
+        channel_bonus = min(0.06, max(0, len(channels) - 1) * 0.02)
+        consolidated = min(0.98, max(0.01, best_score + mention_bonus + channel_bonus))
+
+        out = dict(best_row)
+        out["confidence"] = round(consolidated, 2)
+        out["_conf_channels"] = channels or {_source_channel_family(str(best_row.get("source", "")))}
+        if evidence:
+            out["evidence"] = evidence[:4]
+        fused.append(out)
+
+    return sorted(fused, key=lambda row: (-float(row.get("confidence", 0)), str(row.get("skill", ""))))
 
 
 def _skill_line_hit(skill: str, line: str) -> bool:

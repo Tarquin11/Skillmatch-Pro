@@ -88,3 +88,38 @@ def test_parse_cv_safe_filters_negated_skills_beyond_semantic(monkeypatch):
     assert "python" in skills
     assert "project management" not in skills
     assert "negated_skills_filtered" in payload["warnings"]
+
+
+def test_merge_skill_rows_fuses_mentions_and_evidences():
+    catalog_rows = [
+        {
+            "skill": "python",
+            "confidence": 0.82,
+            "source": "exact:skills",
+            "evidence": ["Python"],
+        }
+    ]
+    extra_rows = [
+        {
+            "skill": "python",
+            "confidence": 0.79,
+            "source": "sentence_text",
+            "evidence": ["used python in internship"],
+        },
+        {
+            "skill": "python",
+            "confidence": 0.74,
+            "source": "semantic_augment",
+            "evidence": ["built data pipeline in python"],
+        },
+    ]
+
+    merged = cv_parser._merge_skill_rows(catalog_rows, extra_rows)
+    assert len(merged) == 1
+    row = merged[0]
+    assert row["skill"] == "python"
+    assert float(row["confidence"]) > 0.82
+    assert {"catalog", "sentence_text", "semantic_augment"}.issubset(set(row.get("_conf_channels", set())))
+    evidences = row.get("evidence") or []
+    assert any("internship" in e for e in evidences)
+    assert any("pipeline" in e for e in evidences)
