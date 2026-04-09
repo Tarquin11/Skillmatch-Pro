@@ -1,3 +1,6 @@
+import uuid
+
+from app.api import candidates as candidates_api
 from app.services import cv_parser
 
 
@@ -66,3 +69,54 @@ def test_upload_cv_partial_pdf_like_input_no_crash(client, admin_auth):
     assert r.status_code == 200, r.text
     body = r.json()
     _assert_upload_contract(body)
+
+
+def test_upload_cv_enriches_skill_ids_from_catalog(client, admin_auth, monkeypatch):
+    suffix = uuid.uuid4().hex[:6]
+    skill_python = f"Python Taxonomy {suffix}"
+    skill_sql = f"SQL Taxonomy {suffix}"
+    sid_python = client.post("/skills/", headers=admin_auth, json={"name": skill_python}).json()["id"]
+    sid_sql = client.post("/skills/", headers=admin_auth, json={"name": skill_sql}).json()["id"]
+
+    fake_parsed = {
+        "ok": True,
+        "degraded": False,
+        "errors": [],
+        "warnings": [],
+        "text_length": 120,
+        "skills": [skill_python, skill_sql, "graphql"],
+        "skills_grouped": {"technical": [skill_python, skill_sql, "graphql"], "management": [], "business": [], "soft-skills": [], "other": []},
+        "skill_hierarchy": [],
+        "skill_graph": {},
+        "extracted_languages": [],
+        "language_details": [],
+        "extraction_channels": {
+            "catalog_match": [skill_python, skill_sql],
+            "open_vocab": ["graphql"],
+            "soft_skill": [],
+            "sentence": [],
+            "semantic_augment": [],
+            "language": [],
+            "project_text": [],
+        },
+        "preview": "profile",
+        "extracted_skills": [
+            {"skill": skill_python, "confidence": 0.92, "confidence_normalized": 1.0, "source": "lexicon", "evidence": []},
+            {"skill": skill_sql, "confidence": 0.88, "confidence_normalized": 0.96, "source": "lexicon", "evidence": []},
+            {"skill": "graphql", "confidence": 0.81, "confidence_normalized": 0.88, "source": "open_vocab", "evidence": []},
+        ],
+        "predicted_title": "Backend Engineer",
+        "predicted_experience_years": 2.0,
+    }
+    monkeypatch.setattr(candidates_api, "parse_cv_safe", lambda **_: fake_parsed, raising=False)
+
+    files = {"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")}
+    r = client.post("/candidates/upload_cv", headers=admin_auth, files=files)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    _assert_upload_contract(body)
+
+    by_skill = {row["skill"]: row for row in body["extracted_skills"]}
+    assert by_skill[skill_python]["skill_id"] == sid_python
+    assert by_skill[skill_sql]["skill_id"] == sid_sql
+    assert by_skill["graphql"]["skill_id"] is None

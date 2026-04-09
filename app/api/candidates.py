@@ -1,10 +1,12 @@
 import io
 import logging
 import zipfile
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.ai.skill_canonicalization import canonicalize_skill
 from app.api.auth import get_current_active_user
 from app.core.structured_log import (
     EVENT_CV_PARSE_FAILURE,
@@ -28,6 +30,34 @@ _ALLOWED_MIMES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+
+
+def _build_skill_id_index(skill_rows: list[tuple[int, str]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for sid, name in skill_rows:
+        key = canonicalize_skill(name or "")
+        if key:
+            out[key] = int(sid)
+    return out
+
+
+def _attach_skill_ids(
+    extracted_rows: Any,
+    skill_id_index: dict[str, int],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(extracted_rows, list):
+        return out
+    for row in extracted_rows:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        key = canonicalize_skill(str(item.get("skill", "")))
+        item["skill_id"] = skill_id_index.get(key) if key else None
+        out.append(item)
+    return out
+
+
 def _sniff_cv_mime(file_bytes: bytes) -> str:
     if not file_bytes:
         return "application/octet-stream"
@@ -99,7 +129,9 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             if not safe_name.lower().endswith(".docx"):
                 safe_name = "cv.docx"
 
-        known_skills = [name for (name,) in db.query(Skill.name).all() if name]
+        skill_rows = [(int(sid), str(name)) for sid, name in db.query(Skill.id, Skill.name).all() if name]
+        known_skills = [name for _sid, name in skill_rows]
+        skill_id_index = _build_skill_id_index(skill_rows)
         parsed = parse_cv_safe(
             file_bytes=contents,
             filename=safe_name,
@@ -109,6 +141,7 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             use_hf_ner=True,
             use_semantic_augment=True,
         )
+        extracted_with_ids = _attach_skill_ids(parsed.get("extracted_skills", []), skill_id_index)
 
         return CandidateUploadRespose(
             filename=file.filename,
@@ -124,7 +157,7 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
             extracted_languages=parsed["extracted_languages"],
             language_details=parsed["language_details"],
             extraction_channels=parsed["extraction_channels"],
-            extracted_skills=parsed["extracted_skills"],
+            extracted_skills=extracted_with_ids,
             preview=parsed["preview"],
             predicted_title=parsed["predicted_title"],
             predicted_experience_years=parsed["predicted_experience_years"],
