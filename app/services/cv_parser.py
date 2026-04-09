@@ -242,13 +242,6 @@ MAX_SECTION_PHRASES = 1_200
 MAX_PHRASE_CHARS = 180
 MAX_KNOWN_SKILLS = 5_000
 DEFAULT_SKILL_TIME_BUDGET_SECONDS = 0.75
-LAYOUT_SHORT_TEXT_FILE_BYTES_THRESHOLD = 30_000
-LAYOUT_SHORT_TEXT_NONSPACE_THRESHOLD = 120
-LAYOUT_COLUMN_MIN_LINES = 24
-LAYOUT_COLUMN_SHORT_LINE_WORDS = 3
-LAYOUT_COLUMN_SHORT_LINE_RATIO = 0.72
-LAYOUT_LETTER_SPACED_MIN_LINES = 10
-LAYOUT_LETTER_SPACED_RATIO = 0.35
 
 
 def _is_skill_heading(section_key: str) -> bool:
@@ -621,21 +614,6 @@ _SPAN_NEGATION_RE = re.compile(
 )
 
 # Weak / hedged wording in evidence → downweight confidence (adversarial phrasing).
-_NEGATION_PREFIX_RE = re.compile(
-    r"(?i)"
-    r"(?:\bno\b|\bnot\b|\bnever\b|\bwithout\b|\blacking\b|\black\s+of\b|"
-    r"\bsans\b|\baucun(?:e)?\b|\bjamais\b|\bpas\s+de\b|\bpas\s+d['\u2019])"
-)
-_NEGATION_SUFFIX_RE = re.compile(r"(?i)^\s*(?:not|never|jamais|absent|missing|manquant(?:e)?)\b")
-_FR_NE_PAS_RE = re.compile(
-    r"(?i)"
-    r"(?:\bne\b(?:\s+\w+){0,7}\s+\bpas\b|\bn['\u2019]\w*(?:\s+\w+){0,7}\s+\bpas\b)"
-)
-_SENTENCE_BREAK_RE = re.compile(r"[.!?;:]")
-_NEGATION_LINK_TAIL_RE = re.compile(
-    r"(?i)(?:\bwith\b|\bin\b|\bon\b|\bfor\b|\bto\b|\bde\b|\bd['\u2019]?\b|\ben\b|\bsur\b|\bavec\b|\bsans\b|\bwithout\b)\s*$"
-)
-
 _WEAK_HEDGE_RE = re.compile(
     r"(?i)\b("
     r"basic|familiar|familiarity|exposed|exposure|"
@@ -652,116 +630,6 @@ def _span_text_negated(span: str) -> bool:
         return False
     norm = _normalize_for_pattern(span)
     return bool(_SPAN_NEGATION_RE.search(norm))
-
-
-def _skill_mention_patterns(skill: str) -> list[str]:
-    canonical = canonicalize_skill(skill or "")
-    if not canonical:
-        return []
-    patterns: list[str] = []
-    literal = re.escape(_normalize_for_pattern(canonical))
-    if literal:
-        patterns.append(rf"\b{literal}\b")
-    for rx, can in _SKILL_SENTENCE_PATTERNS.items():
-        if canonicalize_skill(can) == canonical:
-            patterns.append(rx)
-    return patterns
-
-
-def _segment_tail_for_scope(prefix: str) -> str:
-    local = (prefix or "")[-160:]
-    matches = list(_SENTENCE_BREAK_RE.finditer(local))
-    if matches:
-        local = local[matches[-1].end() :]
-    return local.strip()
-
-
-def _segment_head_for_scope(suffix: str) -> str:
-    local = (suffix or "")[:100]
-    matches = list(_SENTENCE_BREAK_RE.finditer(local))
-    if matches:
-        local = local[: matches[0].start()]
-    return local.strip()
-
-
-def _mention_negated_in_context(skill: str, context_text: str) -> bool:
-    norm = _normalize_for_pattern(context_text or "")
-    if not norm:
-        return False
-    for patt in _skill_mention_patterns(skill):
-        try:
-            for m in re.finditer(patt, norm):
-                prefix = _segment_tail_for_scope(norm[max(0, m.start() - 180) : m.start()])
-                suffix = _segment_head_for_scope(norm[m.end() : m.end() + 80])
-                if _NEGATION_PREFIX_RE.search(prefix):
-                    return True
-                if _FR_NE_PAS_RE.search(prefix):
-                    return True
-                if _NEGATION_SUFFIX_RE.search(suffix):
-                    return True
-        except re.error:
-            continue
-    return False
-
-
-def _skill_negated_in_text(skill: str, text: str, *, window_lines: int = 1) -> bool:
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln and ln.strip()]
-    if not lines:
-        return False
-
-    def _prev_line_links_to_current(prev: str) -> bool:
-        norm_prev = _normalize_for_pattern(prev or "").strip()
-        if not norm_prev:
-            return False
-        if _SENTENCE_BREAK_RE.search(norm_prev[-1:]):
-            return False
-        if _NEGATION_LINK_TAIL_RE.search(norm_prev):
-            return True
-        return False
-
-    neg_hits = 0
-    pos_hits = 0
-    for i, line in enumerate(lines):
-        if not _skill_line_hit(skill, line):
-            continue
-        linked_prev: list[str] = []
-        for off in range(1, int(max(0, window_lines)) + 1):
-            j = i - off
-            if j < 0:
-                break
-            if _prev_line_links_to_current(lines[j]):
-                linked_prev.insert(0, lines[j])
-            else:
-                break
-        window = "\n".join(linked_prev + [line])
-        if _mention_negated_in_context(skill, window):
-            neg_hits += 1
-        else:
-            pos_hits += 1
-    return neg_hits > 0 and pos_hits == 0
-
-
-def filter_negated_skill_rows(
-    rows: list[dict[str, Any]],
-    text: str,
-    *,
-    window_lines: int = 1,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    out: list[dict[str, Any]] = []
-    dropped: list[str] = []
-    seen_drop: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict) or not row.get("skill"):
-            continue
-        skill = str(row.get("skill", "")).strip()
-        if _skill_negated_in_text(skill, text, window_lines=window_lines):
-            can = canonicalize_skill(skill)
-            if can and can not in seen_drop:
-                seen_drop.add(can)
-                dropped.append(can)
-            continue
-        out.append(row)
-    return out, sorted(dropped)
 
 
 def _evidence_weak_hedge(blob: str) -> bool:
@@ -1332,6 +1200,7 @@ def _strip_parenthetical_qualifiers(phrase: str) -> str:
 def _strip_open_vocab_leading_junk(phrase: str) -> str:
     """Remove common PDF-merge prefixes (date ranges) before skill parsing."""
     s = (phrase or "").strip()
+    s = re.sub(r"^[+*#=~|:;,.!/?\\\-\s]+", "", s).strip()
     s = _LEADING_DATE_RANGE_RE.sub("", s).strip()
     s = re.sub(r"^\d{4}\s+", "", s).strip()
     s = re.sub(r"^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\s+", "", s).strip()
@@ -1394,51 +1263,31 @@ def _normalize_for_pattern(text: str) -> str:
     return unicodedata.normalize("NFKD", low).encode("ascii", "ignore").decode("ascii")
 
 
-def _layout_quality_assessment(
-    *,
-    text: str,
-    filename: str,
-    file_bytes_len: int,
-) -> tuple[bool, list[str]]:
-    """Heuristic extraction quality checks for PDF/Word layout degradation.
+_OCR_CHAR_SWAP = str.maketrans({"0": "o", "1": "i", "3": "e", "5": "s", "7": "t"})
 
-    Returns `(degraded, warnings)` while keeping logic conservative:
-    only trigger severe checks for realistically large source files.
-    """
-    warnings: list[str] = []
-    degraded = False
 
-    name = (filename or "").lower()
-    is_layout_sensitive = name.endswith(".pdf") or name.endswith(".docx") or name.endswith(".doc")
-    if not is_layout_sensitive:
-        return False, warnings
+def _deocr_low(text: str) -> str:
+    return (text or "").translate(_OCR_CHAR_SWAP)
 
-    nonspace_len = len(re.sub(r"\s+", "", text or ""))
-    if (
-        file_bytes_len >= LAYOUT_SHORT_TEXT_FILE_BYTES_THRESHOLD
-        and nonspace_len < LAYOUT_SHORT_TEXT_NONSPACE_THRESHOLD
-    ):
-        warnings.append("extraction_suspect_too_short")
-        degraded = True
 
-    lines = [ln.strip() for ln in (text or "").splitlines() if ln and ln.strip()]
-    if len(lines) >= LAYOUT_COLUMN_MIN_LINES:
-        word_counts = [max(1, len(_tokenize(_normalize_for_pattern(ln)))) for ln in lines]
-        short_ratio = sum(1 for c in word_counts if c <= LAYOUT_COLUMN_SHORT_LINE_WORDS) / max(1, len(word_counts))
-        letter_spaced_ratio = sum(1 for ln in lines if _looks_like_letter_spaced_text(ln)) / max(1, len(lines))
+def _looks_high_noise_token(tok: str) -> bool:
+    t = tok.strip()
+    if not t:
+        return True
+    alnum = sum(ch.isalnum() for ch in t)
+    alpha = sum(ch.isalpha() for ch in t)
+    if alnum == 0:
+        return True
+    if alpha == 0:
+        return True
+    if (len(t) >= 6 and alpha / max(1, alnum) < 0.6) or (len(t) >= 8 and any(ch.isdigit() for ch in t)):
+        return True
+    return False
 
-        if short_ratio >= LAYOUT_COLUMN_SHORT_LINE_RATIO:
-            warnings.append("layout_column_fragmentation_suspected")
-            degraded = True
-        if len(lines) >= LAYOUT_LETTER_SPACED_MIN_LINES and letter_spaced_ratio >= LAYOUT_LETTER_SPACED_RATIO:
-            warnings.append("ocr_like_spacing_detected")
-            degraded = True
 
-    if degraded:
-        warnings.append("ocr_or_table_extraction_recommended")
-
-    # Keep stable order and no duplicates.
-    return degraded, list(dict.fromkeys(warnings))
+def _contains_phrase(line_core: str, hint: str) -> bool:
+    patt = r"\b" + r"\s+".join(re.escape(p) for p in hint.split()) + r"\b"
+    return bool(re.search(patt, line_core))
 
 
 def _is_bullet_line(raw: str) -> bool:
@@ -1462,7 +1311,7 @@ def extract_sentence_skill_rows(
     for line in lines:
         if not line or _is_noise_line(line):
             continue
-        norm = _normalize_for_pattern(line)
+        norm = _deocr_low(_normalize_for_pattern(line))
         if not norm:
             continue
         bullet = _is_bullet_line(line)
@@ -1500,9 +1349,12 @@ def _open_vocab_phrase_ok(raw: str, *, language_section: bool = False) -> bool:
         return False
     if _is_noise_skill_phrase(phrase):
         return False
-    low = _normalize_text(display)
+    low = _deocr_low(_normalize_text(display))
     low_core = re.sub(r"[^a-z0-9\s]", "", low).strip()
     if not low_core or low_core in _GENERIC_OPEN_VOCAB_DROP:
+        return False
+    toks = [t for t in re.split(r"\s+", low_core) if t]
+    if toks and sum(1 for t in toks if _looks_high_noise_token(t)) >= max(1, len(toks) // 2):
         return False
     soft_key = low_core
     if soft_key in _SOFT_SKILL_ALLOWLIST:
@@ -1706,6 +1558,23 @@ def extract_soft_skill_rows(
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     floor = max(float(min_confidence), 0.62 if fallback_mode else 0.66)
+    strict_context_canon = {"coordination", "communication", "planning", "budget management"}
+    soft_context_terms = (
+        "projet",
+        "project",
+        "equipe",
+        "team",
+        "stakeholder",
+        "budget",
+        "plan",
+        "risque",
+        "risk",
+        "client",
+        "delivery",
+        "pilotage",
+        "coordination",
+        "communication",
+    )
     for section, lines in sections.items():
         sec_key = _normalize_text(section)
         consider_section = (
@@ -1718,13 +1587,31 @@ def extract_soft_skill_rows(
             continue
         for raw_line in lines:
             line = _normalize_text(raw_line)
+            line = _deocr_low(line)
             line_core = re.sub(r"[^a-z0-9\s]", " ", line)
             line_core = re.sub(r"\s+", " ", line_core).strip()
             if not line_core:
                 continue
+            bullet = _is_bullet_line(raw_line)
+            core_tokens = [t for t in line_core.split() if t]
+            if core_tokens and sum(1 for t in core_tokens if _looks_high_noise_token(t)) >= max(1, len(core_tokens) // 2):
+                continue
             for hint, canonical in _SOFT_SKILL_HINTS.items():
-                if hint not in line_core:
+                hint_norm = _deocr_low(hint)
+                if not _contains_phrase(line_core, hint_norm):
                     continue
+                if canonical in strict_context_canon:
+                    has_context = any(term in line_core for term in soft_context_terms)
+                    wc = len(line_core.split())
+                    # Noisy long bullets often carry random appended keywords: be stricter.
+                    if bullet and not _is_experience_heading(section) and wc > 6 and not has_context:
+                        continue
+                    if canonical in {"coordination", "communication"} and not _is_experience_heading(section):
+                        # Keep short explicit entries, reject narrative/noisy lines.
+                        if wc > 3 and not has_context:
+                            continue
+                    if not (bullet or _is_experience_heading(section) or has_context):
+                        continue
                 sk = _skill_key(canonical)
                 if not sk or sk in seen:
                     continue
@@ -1856,53 +1743,39 @@ def _source_channel_family(source: str) -> str:
 def _merge_skill_rows(
     catalog_rows: list[dict[str, Any]], extra_rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
+    best: dict[str, dict[str, Any]] = {}
     for r in catalog_rows + extra_rows:
         if not isinstance(r, dict) or not r.get("skill"):
             continue
         k = _skill_key(str(r["skill"]))
         if not k:
             continue
-        grouped.setdefault(k, []).append(dict(r))
-
-    fused: list[dict[str, Any]] = []
-    for _k, rows in grouped.items():
-        if not rows:
+        kind = _source_channel_family(str(r.get("source", "")))
+        prev = best.get(k)
+        try:
+            sc = float(r.get("confidence", 0))
+        except Exception:
+            sc = 0.0
+        if prev is None:
+            nr = dict(r)
+            nr["_conf_channels"] = {kind}
+            best[k] = nr
             continue
-
-        def _score(row: dict[str, Any]) -> float:
-            try:
-                return float(row.get("confidence", 0))
-            except Exception:
-                return 0.0
-
-        best_row = max(rows, key=_score)
-        best_score = _score(best_row)
-
-        channels: set[str] = set()
-        evidence: list[str] = []
-        for row in rows:
-            channels.add(_source_channel_family(str(row.get("source", ""))))
-            for ev in row.get("evidence") or []:
-                if not ev:
-                    continue
-                frag = _trim_evidence_fragment(str(ev), max_len=120)
-                if frag and frag not in evidence:
-                    evidence.append(frag)
-
-        # Consolidate confidence from mention multiplicity + channel diversity.
-        mention_bonus = min(0.08, max(0, len(rows) - 1) * 0.02)
-        channel_bonus = min(0.06, max(0, len(channels) - 1) * 0.02)
-        consolidated = min(0.98, max(0.01, best_score + mention_bonus + channel_bonus))
-
-        out = dict(best_row)
-        out["confidence"] = round(consolidated, 2)
-        out["_conf_channels"] = channels or {_source_channel_family(str(best_row.get("source", "")))}
-        if evidence:
-            out["evidence"] = evidence[:4]
-        fused.append(out)
-
-    return sorted(fused, key=lambda row: (-float(row.get("confidence", 0)), str(row.get("skill", ""))))
+        try:
+            ps = float(prev.get("confidence", 0))
+        except Exception:
+            ps = 0.0
+        pchannels = set(prev.get("_conf_channels") or [])
+        if not pchannels:
+            pchannels = {_source_channel_family(str(prev.get("source", "")))}
+        pchannels.add(kind)
+        if sc > ps:
+            nr = dict(r)
+            nr["_conf_channels"] = pchannels
+            best[k] = nr
+        else:
+            prev["_conf_channels"] = pchannels
+    return sorted(best.values(), key=lambda row: (-float(row["confidence"]), str(row["skill"])))
 
 
 def _skill_line_hit(skill: str, line: str) -> bool:
@@ -2380,7 +2253,6 @@ def parse_cv_safe(
     use_semantic: bool = False,
     use_hf_ner: bool = False,
     use_semantic_augment: bool = False,
-    skill_time_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     safe_filename = filename if isinstance(filename, str) else str(filename or "")
     safe_bytes: bytes
@@ -2469,17 +2341,6 @@ def parse_cv_safe(
     result["text_length"] = len(text)
     result["preview"] = text[:200]
 
-    layout_degraded, layout_warnings = _layout_quality_assessment(
-        text=text,
-        filename=safe_filename,
-        file_bytes_len=len(safe_bytes),
-    )
-    if layout_degraded:
-        result["degraded"] = True
-    for w in layout_warnings:
-        if w not in result["warnings"]:
-            result["warnings"].append(w)
-
     if not text.strip():
         result["degraded"] = True
         result["warnings"].append("empty_text")
@@ -2502,12 +2363,9 @@ def parse_cv_safe(
         result["errors"].append(_stage_error("extract_languages_from_sections", exc))
 
     try:
-        if skill_time_budget_seconds is None:
-            skill_budget = DEFAULT_SKILL_TIME_BUDGET_SECONDS
-            if len(text) > 80_000:
-                skill_budget = 0.20
-        else:
-            skill_budget = max(0.05, float(skill_time_budget_seconds))
+        skill_budget = DEFAULT_SKILL_TIME_BUDGET_SECONDS
+        if len(text) > 80_000:
+            skill_budget = 0.20
         start = time.perf_counter()
         rows: list[dict[str, Any]] = []
         if skills_list:
@@ -2580,9 +2438,6 @@ def parse_cv_safe(
                 time_budget_seconds=aug_budget,
             )
             rows = rows + augment_extra
-        rows, negated_filtered = filter_negated_skill_rows(rows, text=text, window_lines=1)
-        if negated_filtered:
-            result["warnings"].append("negated_skills_filtered")
         rows = enrich_skill_confidence_rows(rows, text=text, sections=section_map)
         rows_with_evidence: list[dict[str, Any]] = []
         for row in rows:
@@ -2659,15 +2514,10 @@ def parse_cv_safe(
         result["errors"].append(_stage_error("detect_skills_with_confidence", exc))
         try:
             legacy = detect_skills(text=text, known_skills=skills_list)
+            result["skills"] = [str(s).strip() for s in legacy if isinstance(s, str) and str(s).strip()]
             legacy_rows = [
-                {"skill": str(s).strip(), "confidence": 0.6, "source": "legacy", "evidence": []}
-                for s in legacy
-                if isinstance(s, str) and str(s).strip()
+                {"skill": s, "confidence": 0.6, "source": "legacy", "evidence": []} for s in result["skills"]
             ]
-            legacy_rows, negated_filtered = filter_negated_skill_rows(legacy_rows, text=text, window_lines=1)
-            result["skills"] = [str(r.get("skill")).strip() for r in legacy_rows if r.get("skill")]
-            if negated_filtered:
-                result["warnings"].append("negated_skills_filtered")
             apply_weak_hedge_penalty_to_rows(legacy_rows)
             attach_confidence_normalized(legacy_rows)
             result["extracted_skills"] = legacy_rows

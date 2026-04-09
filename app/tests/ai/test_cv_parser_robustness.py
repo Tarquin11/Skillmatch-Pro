@@ -215,44 +215,6 @@ def test_parse_cv_safe_handles_invalid_file_bytes_type(monkeypatch):
     assert "invalid_file_bytes_type" in payload["warnings"]
 
 
-def test_parse_cv_safe_flags_large_pdf_too_short_extraction(monkeypatch):
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_: "Short text")
-    payload = _parse_never_crash(
-        file_bytes=b"x" * 80_000,
-        filename="scanned_resume.pdf",
-        known_skills=KNOWN_SKILLS,
-    )
-    _assert_safe_contract(payload)
-    assert payload["degraded"] is True
-    assert "extraction_suspect_too_short" in payload["warnings"]
-    assert "ocr_or_table_extraction_recommended" in payload["warnings"]
-
-
-def test_parse_cv_safe_flags_column_fragmentation_layout(monkeypatch):
-    noisy = "\n".join(
-        [
-            "SKILLS",
-            "PYTHON",
-            "SQL",
-            "DOCKER",
-            "EXPERIENCE",
-        ]
-        + [f"col{i}" for i in range(40)]
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_: noisy)
-    payload = _parse_never_crash(
-        file_bytes=b"y" * 120_000,
-        filename="layout_issue.pdf",
-        known_skills=KNOWN_SKILLS,
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    _assert_safe_contract(payload)
-    assert payload["degraded"] is True
-    assert "layout_column_fragmentation_suspected" in payload["warnings"]
-    assert "ocr_or_table_extraction_recommended" in payload["warnings"]
-
-
 def test_parse_cv_safe_budget_hit_with_skills_is_warning_only(monkeypatch):
     monkeypatch.setattr(cv_parser, "extract_text", lambda *_: "Python SQL developer with practical projects")
     monkeypatch.setattr(
