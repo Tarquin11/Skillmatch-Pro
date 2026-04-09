@@ -1,6 +1,10 @@
 from pathlib import Path
+import math
+import random
 
-from app.ai.confidence_calibration import apply_platt_on_unit_interval, load_platt_params
+import pytest
+
+from app.ai.confidence_calibration import apply_platt_on_unit_interval, fit_platt_params, load_platt_params
 
 
 def _repo_root() -> Path:
@@ -37,3 +41,34 @@ def test_load_platt_respects_disabled_flag(monkeypatch):
         assert on is False
     finally:
         p.unlink(missing_ok=True)
+
+
+def test_fit_platt_params_requires_both_classes():
+    with pytest.raises(ValueError):
+        fit_platt_params([0.2, 0.4, 0.9], [1, 1, 1])
+
+
+def test_fit_platt_params_improves_logloss_on_shifted_data():
+    rng = random.Random(42)
+    raws: list[float] = []
+    ys: list[int] = []
+
+    for _ in range(120):
+        x = rng.uniform(0.35, 0.99)
+        raws.append(x)
+        # Strongly over-confident synthetic raw scores: true positive rate is lower.
+        p_true = 1.0 / (1.0 + math.exp(-(6.0 * (x - 0.78))))
+        ys.append(1 if rng.random() < p_true else 0)
+
+    baseline = []
+    for x in raws:
+        q = max(1e-9, min(1.0 - 1e-9, x))
+        baseline.append(q)
+    before = -sum(y * math.log(p) + (1 - y) * math.log(1 - p) for p, y in zip(baseline, ys)) / len(ys)
+
+    a, b, metrics = fit_platt_params(raws, ys)
+    calibrated = [apply_platt_on_unit_interval(x, a, b) for x in raws]
+    after = -sum(y * math.log(p) + (1 - y) * math.log(1 - p) for p, y in zip(calibrated, ys)) / len(ys)
+
+    assert after <= before
+    assert metrics["after_logloss"] <= metrics["before_logloss"]

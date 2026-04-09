@@ -614,6 +614,21 @@ _SPAN_NEGATION_RE = re.compile(
 )
 
 # Weak / hedged wording in evidence → downweight confidence (adversarial phrasing).
+_NEGATION_PREFIX_RE = re.compile(
+    r"(?i)"
+    r"(?:\bno\b|\bnot\b|\bnever\b|\bwithout\b|\blacking\b|\black\s+of\b|"
+    r"\bsans\b|\baucun(?:e)?\b|\bjamais\b|\bpas\s+de\b|\bpas\s+d['\u2019])"
+)
+_NEGATION_SUFFIX_RE = re.compile(r"(?i)^\s*(?:not|never|jamais|absent|missing|manquant(?:e)?)\b")
+_FR_NE_PAS_RE = re.compile(
+    r"(?i)"
+    r"(?:\bne\b(?:\s+\w+){0,7}\s+\bpas\b|\bn['\u2019]\w*(?:\s+\w+){0,7}\s+\bpas\b)"
+)
+_SENTENCE_BREAK_RE = re.compile(r"[.!?;:]")
+_NEGATION_LINK_TAIL_RE = re.compile(
+    r"(?i)(?:\bwith\b|\bin\b|\bon\b|\bfor\b|\bto\b|\bde\b|\bd['\u2019]?\b|\ben\b|\bsur\b|\bavec\b|\bsans\b|\bwithout\b)\s*$"
+)
+
 _WEAK_HEDGE_RE = re.compile(
     r"(?i)\b("
     r"basic|familiar|familiarity|exposed|exposure|"
@@ -630,6 +645,116 @@ def _span_text_negated(span: str) -> bool:
         return False
     norm = _normalize_for_pattern(span)
     return bool(_SPAN_NEGATION_RE.search(norm))
+
+
+def _skill_mention_patterns(skill: str) -> list[str]:
+    canonical = canonicalize_skill(skill or "")
+    if not canonical:
+        return []
+    patterns: list[str] = []
+    literal = re.escape(_normalize_for_pattern(canonical))
+    if literal:
+        patterns.append(rf"\b{literal}\b")
+    for rx, can in _SKILL_SENTENCE_PATTERNS.items():
+        if canonicalize_skill(can) == canonical:
+            patterns.append(rx)
+    return patterns
+
+
+def _segment_tail_for_scope(prefix: str) -> str:
+    local = (prefix or "")[-160:]
+    matches = list(_SENTENCE_BREAK_RE.finditer(local))
+    if matches:
+        local = local[matches[-1].end() :]
+    return local.strip()
+
+
+def _segment_head_for_scope(suffix: str) -> str:
+    local = (suffix or "")[:100]
+    matches = list(_SENTENCE_BREAK_RE.finditer(local))
+    if matches:
+        local = local[: matches[0].start()]
+    return local.strip()
+
+
+def _mention_negated_in_context(skill: str, context_text: str) -> bool:
+    norm = _normalize_for_pattern(context_text or "")
+    if not norm:
+        return False
+    for patt in _skill_mention_patterns(skill):
+        try:
+            for m in re.finditer(patt, norm):
+                prefix = _segment_tail_for_scope(norm[max(0, m.start() - 180) : m.start()])
+                suffix = _segment_head_for_scope(norm[m.end() : m.end() + 80])
+                if _NEGATION_PREFIX_RE.search(prefix):
+                    return True
+                if _FR_NE_PAS_RE.search(prefix):
+                    return True
+                if _NEGATION_SUFFIX_RE.search(suffix):
+                    return True
+        except re.error:
+            continue
+    return False
+
+
+def _skill_negated_in_text(skill: str, text: str, *, window_lines: int = 1) -> bool:
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln and ln.strip()]
+    if not lines:
+        return False
+
+    def _prev_line_links_to_current(prev: str) -> bool:
+        norm_prev = _normalize_for_pattern(prev or "").strip()
+        if not norm_prev:
+            return False
+        if _SENTENCE_BREAK_RE.search(norm_prev[-1:]):
+            return False
+        if _NEGATION_LINK_TAIL_RE.search(norm_prev):
+            return True
+        return False
+
+    neg_hits = 0
+    pos_hits = 0
+    for i, line in enumerate(lines):
+        if not _skill_line_hit(skill, line):
+            continue
+        linked_prev: list[str] = []
+        for off in range(1, int(max(0, window_lines)) + 1):
+            j = i - off
+            if j < 0:
+                break
+            if _prev_line_links_to_current(lines[j]):
+                linked_prev.insert(0, lines[j])
+            else:
+                break
+        window = "\n".join(linked_prev + [line])
+        if _mention_negated_in_context(skill, window):
+            neg_hits += 1
+        else:
+            pos_hits += 1
+    return neg_hits > 0 and pos_hits == 0
+
+
+def filter_negated_skill_rows(
+    rows: list[dict[str, Any]],
+    text: str,
+    *,
+    window_lines: int = 1,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    out: list[dict[str, Any]] = []
+    dropped: list[str] = []
+    seen_drop: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("skill"):
+            continue
+        skill = str(row.get("skill", "")).strip()
+        if _skill_negated_in_text(skill, text, window_lines=window_lines):
+            can = canonicalize_skill(skill)
+            if can and can not in seen_drop:
+                seen_drop.add(can)
+                dropped.append(can)
+            continue
+        out.append(row)
+    return out, sorted(dropped)
 
 
 def _evidence_weak_hedge(blob: str) -> bool:
@@ -2372,6 +2497,9 @@ def parse_cv_safe(
                 time_budget_seconds=aug_budget,
             )
             rows = rows + augment_extra
+        rows, negated_filtered = filter_negated_skill_rows(rows, text=text, window_lines=1)
+        if negated_filtered:
+            result["warnings"].append("negated_skills_filtered")
         rows = enrich_skill_confidence_rows(rows, text=text, sections=section_map)
         rows_with_evidence: list[dict[str, Any]] = []
         for row in rows:
@@ -2448,10 +2576,15 @@ def parse_cv_safe(
         result["errors"].append(_stage_error("detect_skills_with_confidence", exc))
         try:
             legacy = detect_skills(text=text, known_skills=skills_list)
-            result["skills"] = [str(s).strip() for s in legacy if isinstance(s, str) and str(s).strip()]
             legacy_rows = [
-                {"skill": s, "confidence": 0.6, "source": "legacy", "evidence": []} for s in result["skills"]
+                {"skill": str(s).strip(), "confidence": 0.6, "source": "legacy", "evidence": []}
+                for s in legacy
+                if isinstance(s, str) and str(s).strip()
             ]
+            legacy_rows, negated_filtered = filter_negated_skill_rows(legacy_rows, text=text, window_lines=1)
+            result["skills"] = [str(r.get("skill")).strip() for r in legacy_rows if r.get("skill")]
+            if negated_filtered:
+                result["warnings"].append("negated_skills_filtered")
             apply_weak_hedge_penalty_to_rows(legacy_rows)
             attach_confidence_normalized(legacy_rows)
             result["extracted_skills"] = legacy_rows
