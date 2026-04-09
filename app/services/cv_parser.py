@@ -305,6 +305,10 @@ def extract_text(file_bytes, filename):
         text = "\n".join(p.text for p in doc.paragraphs if p.text)
         text = _post_ocr_text_normalize(text)
         return _clean_extracted_text(text)
+    if name.endswith(".txt"):
+        raw = (file_bytes or b"").decode("utf-8", errors="replace")
+        text = _post_ocr_text_normalize(raw)
+        return _clean_extracted_text(text)
     return ""
     
 def _normalize_text(text: str) -> str:
@@ -1423,23 +1427,38 @@ def extract_language_details_from_anywhere(
         has_proficiency_hint = any(h in norm for h in _LANGUAGE_PROFICIENCY_HINTS)
         if not (cefr_matches or lang_mentions >= 2 or has_proficiency_hint):
             continue
+        hits: list[tuple[int, int, str]] = []
         for key, canonical in _LANGUAGE_ALIAS_MAP_NORM.items():
-            if not key:
+            if not key or canonical in seen:
                 continue
             for m in re.finditer(rf"\b{re.escape(key)}\b", norm):
-                if canonical in seen:
-                    continue
-                seen.add(canonical)
-                item: dict[str, str] = {
-                    "language": canonical,
-                    "source": "language_fallback:text_scan",
-                }
-                if cefr_matches:
-                    nearest = min(cefr_matches, key=lambda t: abs(t[0] - m.start()))
-                    item["level"] = nearest[1]
-                out.append(item)
-                if len(out) >= max_languages:
-                    return out
+                hits.append((m.start(), m.end(), canonical))
+        hits.sort(key=lambda h: h[0])
+        deduped: list[tuple[int, int, str]] = []
+        dup_lang: set[str] = set()
+        for s, e, c in hits:
+            if c in dup_lang:
+                continue
+            dup_lang.add(c)
+            deduped.append((s, e, c))
+        for i, (s, e, c) in enumerate(deduped):
+            if c in seen:
+                continue
+            seen.add(c)
+            next_lang_start = deduped[i + 1][0] if i + 1 < len(deduped) else len(norm)
+            in_seg = [(pos, lvl) for pos, lvl in cefr_matches if e <= pos < next_lang_start]
+            if not in_seg:
+                in_seg = [(pos, lvl) for pos, lvl in cefr_matches if s <= pos < next_lang_start]
+            item: dict[str, str] = {"language": c, "source": "language_fallback:text_scan"}
+            if in_seg:
+                item["level"] = min(in_seg, key=lambda t: t[0])[1]
+            elif cefr_matches:
+                behind = [(pos, lvl) for pos, lvl in cefr_matches if pos < s]
+                if behind:
+                    item["level"] = max(behind, key=lambda t: t[0])[1]
+            out.append(item)
+            if len(out) >= max_languages:
+                return out
     return out
 
 

@@ -65,3 +65,15 @@ def test_evaluate_cv_snippets_generates_metrics_report(monkeypatch):
     assert "tools" in report["metrics"]
     assert "languages" in report["metrics"]
     assert "project_text_fp_rate" in report["metrics"]
+    assert "channels" in report["metrics"]
+    assert isinstance(report["metrics"]["channels"], dict)
+    for key in (
+        "catalog_match",
+        "open_vocab",
+        "soft_skill",
+        "sentence",
+        "semantic_augment",
+        "ner_span",
+        "other",
+    ):
+        assert key in report["metrics"]["channels"]

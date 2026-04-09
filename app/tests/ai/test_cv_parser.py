@@ -62,7 +62,13 @@ def test_detect_experience_years_from_keyword_context_years():
 
 
 def test_extract_text_unsupported_extension_returns_empty():
-    assert extract_text(b"plain text bytes", "resume.txt") == ""
+    assert extract_text(b"plain text bytes", "resume.unknown_ext") == ""
+
+
+def test_extract_text_utf8_txt():
+    out = extract_text("Ligne une\nLigne deux".encode("utf-8"), "snippet.txt")
+    assert "ligne une" in out.lower()
+    assert "ligne deux" in out.lower()
 
 
 def test_detect_title_returns_none_for_empty_text():
@@ -171,6 +177,21 @@ def test_parse_cv_safe_extracts_languages_with_french_heading(monkeypatch):
     assert payload["extracted_languages"] == ["french", "english"]
     assert payload["language_details"][0]["level"] == "B1"
     assert payload["language_details"][1]["level"] == "B2"
+
+
+def test_language_fallback_pairs_cefr_to_nearest_following_language_on_line(monkeypatch):
+    text = "Languages: Arabic (C1), Swedish (A1)"
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=[],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    by_lang = {row["language"]: row.get("level") for row in payload["language_details"]}
+    assert by_lang.get("arabic") == "C1"
+    assert by_lang.get("swedish") == "A1"
 
 
 def test_parse_cv_safe_extracts_languages_without_heading_fallback(monkeypatch):
