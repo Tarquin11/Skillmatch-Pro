@@ -34,9 +34,12 @@ class CandidateMatcher:
 
     MODEL_NAME = "candidate_matcher"
     ARTIFACT_SCHEMA_VERSION = "1.0.0"
+    COLLAPSED_SCORE_STD_MAX = 1e-4
+    COLLAPSED_SCORE_MAX_UNIQUE = 2
 
     def __init__(self, use_semantic: bool = True):
         self.feature_engineer = FeatureEngineer(use_semantic=use_semantic)
+        self.model_blend_weight, self.heuristic_blend_weight = self._blend_weights_from_env()
         self.model = Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
@@ -44,6 +47,23 @@ class CandidateMatcher:
             ]
         )
         self.is_fitted = False
+
+    @staticmethod
+    def _blend_weights_from_env() -> tuple[float, float]:
+        # Defaults preserve previous behavior (20% model / 80% heuristic).
+        model_raw = os.getenv("MATCH_MODEL_BLEND_WEIGHT", "0.2")
+        heuristic_raw = os.getenv("MATCH_HEURISTIC_BLEND_WEIGHT", "0.8")
+        try:
+            model_w = float(model_raw)
+            heuristic_w = float(heuristic_raw)
+        except (TypeError, ValueError):
+            return 0.2, 0.8
+        model_w = max(0.0, model_w)
+        heuristic_w = max(0.0, heuristic_w)
+        total = model_w + heuristic_w
+        if total <= 0.0:
+            return 0.2, 0.8
+        return model_w / total, heuristic_w / total
 
     def _build_artifact_metadata(self, artifact_path: Path | None = None) -> dict[str, Any]:
         clf= self.model.named_steps.get("clf") if hasattr(self.model, "named_steps") else None
@@ -55,6 +75,8 @@ class CandidateMatcher:
                 "trained_at_utc":datetime.now(timezone.utc).isoformat(),
                 "is_fitted": bool(self.is_fitted),
                 "use_semantic":bool(self.feature_engineer.use_semantic),
+                "model_blend_weight": float(self.model_blend_weight),
+                "heuristic_blend_weight": float(self.heuristic_blend_weight),
                 "feature_columns":list(FEATURE_COLUMNS),
                 "classifier":type(clf).__name__ if clf is not None else type(self.model.__name__),
                 "artifact_path": str(artifact_path) if artifact_path else None, 
@@ -233,7 +255,12 @@ class CandidateMatcher:
         row = np.asarray([[features[col] for col in FEATURE_COLUMNS]], dtype=np.float32)
 
         if self.is_fitted:
-            score = float(self.model.predict_proba(row)[0, 1])
+            model_score = float(self.model.predict_proba(row)[0, 1])
+            heuristic_score = self._heuristic_score(features)
+            # Guard against over-confident collapsed outputs on sparse feature slices.
+            score = (self.model_blend_weight * model_score) + (
+                self.heuristic_blend_weight * heuristic_score
+            )
             source = "model"
         else:
             score = self._heuristic_score(features)
@@ -274,8 +301,21 @@ class CandidateMatcher:
             )
 
             if self.is_fitted:
-                scores = self.model.predict_proba(x)[:, 1]
-                source = "model"
+                model_scores = self.model.predict_proba(x)[:, 1]
+                heuristic_scores = np.asarray(
+                    [self._heuristic_score(feat) for feat in features_list],
+                    dtype=np.float32,
+                )
+                if self._scores_look_collapsed(model_scores):
+                    scores = (self.model_blend_weight * model_scores) + (
+                        self.heuristic_blend_weight * heuristic_scores
+                    )
+                    source = "model+heuristic_recovery"
+                else:
+                    scores = (self.model_blend_weight * model_scores) + (
+                        self.heuristic_blend_weight * heuristic_scores
+                    )
+                    source = "model+heuristic_blend"
             else:
                 scores = np.asarray(
                     [self._heuristic_score(feat) for feat in features_list],
@@ -295,6 +335,14 @@ class CandidateMatcher:
                 )
 
         return results
+
+    def _scores_look_collapsed(self, scores: np.ndarray) -> bool:
+        if scores.size < 8:
+            return False
+        rounded = np.round(scores.astype(np.float64), 6)
+        unique_count = int(np.unique(rounded).size)
+        stddev = float(np.std(rounded))
+        return (unique_count <= self.COLLAPSED_SCORE_MAX_UNIQUE) or (stddev <= self.COLLAPSED_SCORE_STD_MAX)
 
 
     def rank_candidates(self, job_raw: Any, employee_list: list[Any], top_k: int = 20) -> list[dict[str, Any]]:

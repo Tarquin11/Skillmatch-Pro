@@ -1,5 +1,5 @@
 from pydantic import Field
-from typing import List , Dict
+from typing import List , Dict, Optional
 from app.schemas.common import StrictBaseModel
 
 class JobMatchRequest(StrictBaseModel):
@@ -19,6 +19,8 @@ class MatchCandidateOut(StrictBaseModel):
     full_name: str
     score: float
     predicted_fit_score: float
+    predicted_title: Optional[str] = None
+    predicted_experience_years: Optional[float] = None
     scoring_source: str
     feature_breakdown: Dict[str, float]
     top_reasons: List[str]

@@ -119,3 +119,48 @@ def test_match_job_latency_is_reasonable_after_warmup(client, admin_auth, monkey
 
     assert _p95(samples_ms) <= max_p95_ms
     assert max(samples_ms) <= max_single_ms
+
+
+def test_match_job_recovers_when_scores_are_flat(client, admin_auth, monkeypatch):
+    monkeypatch.setattr(match_api.inference_service, "_DRIFT_MONITORING_ENABLED", False, raising=False)
+    _seed_employees(client, admin_auth, count=6)
+
+    payload = _match_payload(limit=6)
+
+    def fake_rank_candidates(**kwargs):
+        employees = kwargs["employees"]
+        rows = []
+        for emp in employees[: payload["limit"]]:
+            rows.append(
+                {
+                    "employee_id": int(emp.id),
+                    "full_name": str(emp.full_name),
+                    "score": 1.74,
+                    "predicted_fit_score": 1.74,
+                    "score_raw": 1.74,
+                    "predicted_fit_score_raw": 1.74,
+                    "scoring_source": "model_primary",
+                    "feature_breakdown": {},
+                    "top_reasons": [],
+                    "matched_skills": [],
+                    "skill_gaps": [],
+                    "skill_gap_ratio": 1.0,
+                    "learning_recommendations": [],
+                }
+            )
+        return rows
+
+    monkeypatch.setattr(match_api.inference_service, "rank_candidates", fake_rank_candidates)
+    monkeypatch.setattr(
+        match_api,
+        "calculate_weighted_score",
+        lambda *, employee, **_: {"total": float(20 + (employee.id % 5) * 5)},
+    )
+
+    r, _ = _call_match(client, admin_auth, payload)
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    scores = [float(item["predicted_fit_score"]) for item in body["results"]]
+    assert len(set(scores)) > 1
+    assert all("+api_recovery" in str(item["scoring_source"]) for item in body["results"])

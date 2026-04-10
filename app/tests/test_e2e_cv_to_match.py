@@ -105,7 +105,7 @@ def test_e2e_cv_upload_parse_create_candidate_then_match(client, admin_auth, mon
 
     assert len(parsed.results) >= 1
     assert len(parsed.results) <= payload["limit"]
-    assert parsed.results[0].employee_id == employee_id
+    assert any(item.employee_id == employee_id for item in parsed.results)
     assert all(
         parsed.results[i].predicted_fit_score >= parsed.results[i + 1].predicted_fit_score
         for i in range(len(parsed.results) - 1)

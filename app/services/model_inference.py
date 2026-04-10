@@ -22,6 +22,7 @@ from app.ai.matcher import CandidateMatcher
 logger = logging.getLogger(__name__)
 
 class ModelInferenceService:
+    _SCORING_POLICY_VERSION = "2026-04-10-exp-filter-v1"
     _CACHE_MAX = 2048
     _CACHE_TTL_SEC = 300.0
     _PRED_CACHE: "OrderedDict[str, tuple[float, dict[str, Any]]]" = OrderedDict()
@@ -69,6 +70,168 @@ class ModelInferenceService:
     _CANARY_STICKY_SALT = os.getenv("AI_CANARY_STICKY_SALT","skillmatch-canary-v1")
     _CANARY_MATCHER: Any | None = None
     _CANARY_LOAD_ATTEMTED = False
+    _COLLAPSED_SCORE_MIN_ROWS = int(os.getenv("AI_COLLAPSED_SCORE_MIN_ROWS", "10"))
+    _COLLAPSED_SCORE_MAX_UNIQUE = int(os.getenv("AI_COLLAPSED_SCORE_MAX_UNIQUE", "2"))
+    _COLLAPSED_SCORE_STDDEV_MAX = float(os.getenv("AI_COLLAPSED_SCORE_STDDEV_MAX", "0.1"))
+
+    @staticmethod
+    def _bounded_unit(value: Any, default: float = 0.0) -> float:
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            val = default
+        return float(max(0.0, min(1.0, val)))
+
+    def _apply_required_skill_guardrail(
+        self,
+        *,
+        score_percent: float,
+        skill_overlap: float,
+        required_skills: Sequence[str],
+    ) -> tuple[float, str | None]:
+        if len(required_skills or []) == 0:
+            return float(score_percent), None
+
+        overlap = self._bounded_unit(skill_overlap, default=0.0)
+        if overlap >= 0.35:
+            return float(score_percent), None
+
+        if overlap < 0.05:
+            cap = 15.0
+        elif overlap < 0.20:
+            cap = 27.5
+        else:
+            cap = 40.0
+
+        adjusted = float(min(float(score_percent), cap))
+        if adjusted >= float(score_percent):
+            return float(score_percent), None
+
+        reason = (
+            f"Low required-skill coverage ({overlap:.2f}) limited score to {cap:.1f}%."
+        )
+        return adjusted, reason
+
+    def _apply_experience_guardrail(
+        self,
+        *,
+        score_percent: float,
+        predicted_experience_years: float,
+        min_experience: int,
+    ) -> tuple[float, str | None]:
+        if int(min_experience or 0) <= 0:
+            return float(score_percent), None
+
+        exp = max(0.0, float(predicted_experience_years or 0.0))
+        required = float(max(1, int(min_experience)))
+        if exp >= required:
+            return float(score_percent), None
+
+        ratio = exp / required
+        if ratio < 0.25:
+            cap = 10.0
+        elif ratio < 0.50:
+            cap = 14.0
+        elif ratio < 0.75:
+            cap = 18.0
+        else:
+            cap = 24.0
+
+        adjusted = float(min(float(score_percent), cap))
+        if adjusted >= float(score_percent):
+            return float(score_percent), None
+
+        reason = (
+            f"Experience below requirement ({exp:.2f}y / {required:.2f}y) limited score to {cap:.1f}%."
+        )
+        return adjusted, reason
+
+    def _title_alignment_ratio(self, job_title: str, predicted_title: str | None) -> float:
+        job_tokens = {tok for tok in normalize_skill_name(job_title).split() if tok}
+        title_tokens = {tok for tok in normalize_skill_name(predicted_title or "").split() if tok}
+        if not job_tokens or not title_tokens:
+            return 0.0
+        return float(len(job_tokens & title_tokens) / len(job_tokens))
+
+    def _is_relevant_row(
+        self,
+        *,
+        row: dict[str, Any],
+        job_title: str,
+        required_skills: Sequence[str],
+        min_experience: int,
+    ) -> bool:
+        if len(required_skills or []) == 0:
+            return True
+
+        required_exp = int(min_experience or 0)
+        if required_exp > 0:
+            try:
+                predicted_exp = float(row.get("predicted_experience_years", 0.0))
+            except (TypeError, ValueError):
+                predicted_exp = 0.0
+            if predicted_exp < float(required_exp):
+                # Keep only strongly skill-aligned exceptions below experience threshold.
+                try:
+                    overlap = 1.0 - float(row.get("skill_gap_ratio", 1.0))
+                except (TypeError, ValueError):
+                    overlap = 0.0
+                if overlap < 0.5:
+                    return False
+
+        matched = row.get("matched_skills")
+        if isinstance(matched, (list, tuple, set)) and len(matched) > 0:
+            return True
+
+        try:
+            gap_ratio = float(row.get("skill_gap_ratio", 1.0))
+            if gap_ratio < 0.999:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+        title_align = self._title_alignment_ratio(
+            job_title,
+            str(row.get("predicted_title") or ""),
+        )
+        return title_align >= 0.5
+
+    def _filter_low_relevance_rows(
+        self,
+        *,
+        rows: Sequence[dict[str, Any]],
+        job_title: str,
+        required_skills: Sequence[str],
+        min_experience: int,
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        if len(required_skills or []) == 0:
+            return list(rows)
+
+        relevant = [
+            row
+            for row in rows
+            if self._is_relevant_row(
+                row=row,
+                job_title=job_title,
+                required_skills=required_skills,
+                min_experience=min_experience,
+            )
+        ]
+        if not relevant:
+            return list(rows)
+
+        dropped = len(rows) - len(relevant)
+        if dropped > 0:
+            logger.info(
+                "ai_relevance_filter_applied job_title=%s total=%d kept=%d dropped=%d",
+                job_title,
+                len(rows),
+                len(relevant),
+                dropped,
+            )
+        return relevant
 
     def _log_inference_metrics(
         self,
@@ -136,7 +299,7 @@ class ModelInferenceService:
     def _job_cache_key(self, job_title: str, required_skills: Sequence[str], min_experience: int) -> str:
         skills = [normalize_skill_name(s) for s in (required_skills or []) if s]
         skills_key = ",".join(sorted({s for s in skills if s}))
-        return f"{(job_title or '').strip().lower()}|{min_experience}|{skills_key}"
+        return f"{self._SCORING_POLICY_VERSION}|{(job_title or '').strip().lower()}|{min_experience}|{skills_key}"
 
     def _employee_cache_key(self, employee: Any) -> str:
         emp_id = getattr(employee, "id", None)
@@ -286,6 +449,34 @@ class ModelInferenceService:
                 employees=employees,
             )
         ranked.sort(key=lambda x: x["predicted_fit_score"], reverse=True)
+        if matcher is not None and self._scores_look_collapsed(ranked):
+            logger.warning(
+                "ai_collapsed_scores_detected job_title=%s total=%d unique=%d std=%.4f source=%s",
+                job_title,
+                len(ranked),
+                len({round(float(row.get("predicted_fit_score", 0.0)), 2) for row in ranked}),
+                float(np.std([float(row.get("predicted_fit_score", 0.0)) for row in ranked])) if ranked else 0.0,
+                model_source,
+            )
+            recovered = self._recover_collapsed_scores(
+                rows=ranked,
+                employees=employees,
+                job_title=job_title,
+                required_skills=required_skills,
+                min_experience=min_experience,
+                model_source=model_source,
+            )
+            if recovered:
+                ranked = recovered
+                ranked.sort(key=lambda x: x["predicted_fit_score"], reverse=True)
+
+        ranked = self._filter_low_relevance_rows(
+            rows=ranked,
+            job_title=job_title,
+            required_skills=required_skills,
+            min_experience=min_experience,
+        )
+        ranked.sort(key=lambda x: x["predicted_fit_score"], reverse=True)
 
         self._log_prediction_distribution(
             job_title=job_title,
@@ -387,8 +578,8 @@ class ModelInferenceService:
 
                     features = pred.get("features", {}) or {}
                     breakdown = self._model_feature_breakdown(matcher, features)
-                    reasons = self._top_reasons(features, breakdown)
                     score = float(pred.get("score_percent", 0.0))
+                    original_model_score = score
 
                     gap_report = build_training_recommendations(
                         job_title=job_title,
@@ -396,12 +587,39 @@ class ModelInferenceService:
                         owned_skills=self._extract_employee_skills(employee),
                         top_k=3,
                     )
+                    experience_years = round(self._employee_experience_years(employee), 2)
+                    overlap = self._bounded_unit(
+                        features.get(
+                            "skill_overlap",
+                            1.0 - float(gap_report.get("skill_gap_ratio", 1.0)),
+                        ),
+                        default=0.0,
+                    )
+                    score, guardrail_reason = self._apply_required_skill_guardrail(
+                        score_percent=score,
+                        skill_overlap=overlap,
+                        required_skills=required_skills,
+                    )
+                    score, experience_guardrail_reason = self._apply_experience_guardrail(
+                        score_percent=score,
+                        predicted_experience_years=experience_years,
+                        min_experience=min_experience,
+                    )
+                    reasons = self._top_reasons(features, breakdown)
+                    if guardrail_reason:
+                        reasons = [guardrail_reason, *reasons]
+                    if experience_guardrail_reason:
+                        reasons = [experience_guardrail_reason, *reasons]
+                    if (guardrail_reason or experience_guardrail_reason) and score < original_model_score:
+                        breakdown["required_skill_guardrail"] = round(score - original_model_score, 6)
 
                     row = {
                         "employee_id": int(employee.id),
                         "full_name": self._full_name(employee),
                         "score": round(score, 2),
                         "predicted_fit_score": round(score, 2),
+                        "predicted_title": (str(getattr(employee, "position", "")).strip() or None),
+                        "predicted_experience_years": experience_years,
                         "score_raw": float(score),
                         "predicted_fit_score_raw": float(score),
                         "scoring_source": model_source,
@@ -451,8 +669,8 @@ class ModelInferenceService:
                 try:
                     features = pred.get("features", {}) or {}
                     breakdown = self._model_feature_breakdown(matcher, features)
-                    reasons = self._top_reasons(features, breakdown)
                     score = float(pred.get("score_percent", 0.0))
+                    original_model_score = score
 
                     gap_report = build_training_recommendations(
                         job_title=job_title,
@@ -460,15 +678,42 @@ class ModelInferenceService:
                         owned_skills=self._extract_employee_skills(employee),
                         top_k=3,
                     )
+                    experience_years = round(self._employee_experience_years(employee), 2)
+                    overlap = self._bounded_unit(
+                        features.get(
+                            "skill_overlap",
+                            1.0 - float(gap_report.get("skill_gap_ratio", 1.0)),
+                        ),
+                        default=0.0,
+                    )
+                    score, guardrail_reason = self._apply_required_skill_guardrail(
+                        score_percent=score,
+                        skill_overlap=overlap,
+                        required_skills=required_skills,
+                    )
+                    score, experience_guardrail_reason = self._apply_experience_guardrail(
+                        score_percent=score,
+                        predicted_experience_years=experience_years,
+                        min_experience=min_experience,
+                    )
+                    reasons = self._top_reasons(features, breakdown)
+                    if guardrail_reason:
+                        reasons = [guardrail_reason, *reasons]
+                    if experience_guardrail_reason:
+                        reasons = [experience_guardrail_reason, *reasons]
+                    if (guardrail_reason or experience_guardrail_reason) and score < original_model_score:
+                        breakdown["required_skill_guardrail"] = round(score - original_model_score, 6)
 
                     row = {
                         "employee_id": int(employee.id),
                         "full_name": self._full_name(employee),
                         "score": round(score, 2),
                         "predicted_fit_score": round(score, 2),
+                        "predicted_title": (str(getattr(employee, "position", "")).strip() or None),
+                        "predicted_experience_years": experience_years,
                         "score_raw": float(score),
                         "predicted_fit_score_raw": float(score),
-                        "scoring_source": "model",
+                        "scoring_source": model_source,
                         "feature_breakdown": breakdown,
                         "top_reasons": reasons,
                         "matched_skills": gap_report["matched_skills"],
@@ -533,6 +778,88 @@ class ModelInferenceService:
                 out.append(row)
         return out
 
+    def _scores_look_collapsed(self, rows: Sequence[dict[str, Any]]) -> bool:
+        if len(rows) < 2:
+            return False
+
+        scores = [float(row.get("predicted_fit_score", 0.0)) for row in rows]
+        rounded_scores = [round(score, 2) for score in scores]
+        unique_count = len(set(rounded_scores))
+        stddev = float(np.std(scores)) if scores else 0.0
+        spread = (max(scores) - min(scores)) if scores else 0.0
+
+        if unique_count <= self._COLLAPSED_SCORE_MAX_UNIQUE:
+            return True
+        if stddev <= self._COLLAPSED_SCORE_STDDEV_MAX:
+            return True
+        return spread <= 0.25
+
+    def _recover_collapsed_scores(
+        self,
+        *,
+        rows: Sequence[dict[str, Any]],
+        employees: Sequence[Any],
+        job_title: str,
+        required_skills: Sequence[str],
+        min_experience: int,
+        model_source: str,
+    ) -> list[dict[str, Any]]:
+        by_id = {int(getattr(emp, "id")): emp for emp in employees if getattr(emp, "id", None) is not None}
+        recovered: list[dict[str, Any]] = []
+
+        for row in rows:
+            emp_id = row.get("employee_id")
+            if emp_id is None:
+                continue
+            employee = by_id.get(int(emp_id))
+            if employee is None:
+                continue
+
+            h_row = self._build_heuristic_row(
+                employee=employee,
+                job_title=job_title,
+                required_skills=required_skills,
+                min_experience=min_experience,
+                scoring_source="heuristic_recovery",
+            )
+            if h_row is None:
+                continue
+
+            model_score = float(row.get("predicted_fit_score", 0.0))
+            heuristic_score = float(h_row.get("predicted_fit_score", 0.0))
+            blended = round((0.2 * model_score) + (0.8 * heuristic_score), 2)
+
+            merged = dict(row)
+            merged["score"] = blended
+            merged["predicted_fit_score"] = blended
+            merged["score_raw"] = float(blended)
+            merged["predicted_fit_score_raw"] = float(blended)
+            merged["scoring_source"] = f"{model_source}+heuristic_recovery"
+            merged["feature_breakdown"] = dict(h_row.get("feature_breakdown", {}))
+            merged["top_reasons"] = list(h_row.get("top_reasons", []))
+            recovered.append(merged)
+
+        if not recovered:
+            return []
+
+        if len(recovered) < len(rows):
+            recovered_ids = {int(item.get("employee_id")) for item in recovered if item.get("employee_id") is not None}
+            for row in rows:
+                emp_id = row.get("employee_id")
+                if emp_id is None:
+                    recovered.append(dict(row))
+                    continue
+                if int(emp_id) not in recovered_ids:
+                    recovered.append(dict(row))
+
+        logger.info(
+            "ai_collapsed_scores_recovered job_title=%s total=%d source=%s",
+            job_title,
+            len(recovered),
+            model_source,
+        )
+        return recovered
+
     def _build_heuristic_row(
         self,
         *,
@@ -566,11 +893,30 @@ class ModelInferenceService:
         score = float(h.get("total", 0.0))
         breakdown = {
             "skill_overlap": float(h.get("skill_overlap", 0.0)),
+            "title_alignment": float(h.get("title_alignment", 0.0)),
             "experience_score": float(h.get("experience_score", 0.0)),
             "semantic_similarity": float(h.get("semantic_similarity", 0.0)),
             "performance_score": float(h.get("performance_score", 0.0)),
         }
+        base_heuristic_score = score
+        experience_years = round(self._employee_experience_years(employee), 2)
+        score, guardrail_reason = self._apply_required_skill_guardrail(
+            score_percent=score,
+            skill_overlap=breakdown.get("skill_overlap", 0.0),
+            required_skills=required_skills,
+        )
+        score, experience_guardrail_reason = self._apply_experience_guardrail(
+            score_percent=score,
+            predicted_experience_years=experience_years,
+            min_experience=min_experience,
+        )
         reasons = self._top_reasons(breakdown, breakdown)
+        if guardrail_reason:
+            reasons = [guardrail_reason, *reasons]
+        if experience_guardrail_reason:
+            reasons = [experience_guardrail_reason, *reasons]
+        if (guardrail_reason or experience_guardrail_reason) and score < base_heuristic_score:
+            breakdown["required_skill_guardrail"] = round(score - base_heuristic_score, 6)
 
         gap_report = build_training_recommendations(
             job_title=job_title,
@@ -584,6 +930,8 @@ class ModelInferenceService:
             "full_name": self._full_name(employee),
             "score": round(score, 2),
             "predicted_fit_score": round(score, 2),
+            "predicted_title": (str(getattr(employee, "position", "")).strip() or None),
+            "predicted_experience_years": experience_years,
             "score_raw": float(score),
             "predicted_fit_score_raw": float(score),
             "scoring_source": scoring_source,
@@ -1017,6 +1365,8 @@ class ModelInferenceService:
     def _reason_text(self, feature: str, value: float, contribution: float) -> str:
         if feature == "skill_overlap":
             return f"Strong skill overlap ({value:.2f})."
+        if feature == "title_alignment":
+            return f"Job title alignment ({value:.2f})."
         if feature == "experience_surplus":
             return f"Experience exceeds requirement ({value:.2f} years)."
         if feature == "experience_gap":
@@ -1037,6 +1387,13 @@ class ModelInferenceService:
         first = (getattr(employee, "first_name", None) or "").strip()
         last = (getattr(employee, "last_name", None) or "").strip()
         return (f"{first} {last}".strip() or "Unknown")
+
+    def _employee_experience_years(self, employee: Any) -> float:
+        hire_date = getattr(employee, "hire_date", None)
+        if hire_date is None:
+            return 0.0
+        days = max(0, (datetime.now(timezone.utc).date() - hire_date).days)
+        return float(days / 365.25)
 
     def _extract_employee_skills(self, employee: Any) -> list[str]:
         names: list[str] = []

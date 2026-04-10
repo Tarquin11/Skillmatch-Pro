@@ -1,24 +1,16 @@
 from __future__ import annotations
 import os
+import math
 from datetime import date
 from typing import Iterable, Optional, Sequence
 from app.services.embedding_service import compute_semantic_similarity
-from app.ai.preprocessing import normalize_skill_name
+from app.ai.preprocessing import normalize_performance, normalize_skill_name
 
-
-PERFORMANCE_MAPPING = {
-    "superior": 1.0,
-    "accord parfait": 0.8,
-    "acceptable": 0.6,
-    "inacceptable": 0.4,
-    "non applicable": 0.2,
-}
 _TRUTHY_VALUES = {"1", "true", "yes", "on"}
 _embedding_service = None
 
 def performance_weight(score: Optional[str]) -> float:
-    normalized = (score or "").strip().lower()
-    return PERFORMANCE_MAPPING.get(normalized, 0.0)
+    return normalize_performance(score)
 
 
 def _extract_employee_skills(employee) -> list[str]:
@@ -47,7 +39,8 @@ def _experience_score(employee, min_experience: int = 0) -> float:
     years = _experience_years(employee)
     if min_experience > 0:
         return min(years / float(min_experience), 1.0)
-    return min(years / 10.0, 1.0)
+    # Keep variation for long-tenure populations instead of hard-clipping at 10y.
+    return 1.0 - math.exp(-float(years) / 6.0)
 
 
 def _skill_overlap(required_skills: Sequence[str], employee_skills: Sequence[str]) -> float:
@@ -68,6 +61,16 @@ def _employee_profile_text(employee, employee_skills: Iterable[str]) -> str:
     return " ".join(part for part in parts if part).strip()
 
 
+def _title_alignment(job_title: str, employee_position: str) -> float:
+    job_tokens = {tok for tok in normalize_skill_name(job_title).split() if tok}
+    pos_tokens = {tok for tok in normalize_skill_name(employee_position).split() if tok}
+    if not job_tokens or not pos_tokens:
+        return 0.0
+
+    overlap = len(job_tokens & pos_tokens)
+    return overlap / len(job_tokens)
+
+
 def _is_ai_matching_enabled() -> bool:
     return os.getenv("ENABLE_AI_MATCHING", "false").strip().lower() in _TRUTHY_VALUES
 
@@ -78,6 +81,13 @@ def _get_embedding_service():
         from app.services.embedding_service import EmbeddingService
         _embedding_service = EmbeddingService()
     return _embedding_service
+
+
+def _normalize_semantic_similarity(raw_similarity: float) -> float:
+    if not math.isfinite(raw_similarity):
+        return 0.0
+    clipped = max(-1.0, min(1.0, float(raw_similarity)))
+    return (clipped + 1.0) / 2.0
 
 
 def _semantic_similarity(target_text: str, employee_text: str) -> float:
@@ -91,7 +101,8 @@ def _semantic_similarity(target_text: str, employee_text: str) -> float:
         service = _get_embedding_service()
         vec1 = service.generate_embedding(target_text)
         vec2 = service.generate_embedding(employee_text)
-        return compute_semantic_similarity(vec1, vec2)
+        raw_similarity = compute_semantic_similarity(vec1, vec2)
+        return _normalize_semantic_similarity(raw_similarity)
     except Exception:
         # Keep ranking functional even when embedding model fails.
         return 0.0
@@ -102,6 +113,7 @@ def calculate_weighted_score(
     job_title: str,
     required_skills: Optional[Sequence[str]] = None,
     min_experience: int = 0,
+    use_semantic: bool | None = None,
 ) -> dict:
     required = list(required_skills or [])
     employee_skills = _extract_employee_skills(employee)
@@ -109,29 +121,34 @@ def calculate_weighted_score(
     target_text = " ".join([job_title, *required]).strip()
     employee_text = _employee_profile_text(employee, employee_skills)
 
-    semantic_similarity = _semantic_similarity(target_text, employee_text)
+    semantic_enabled = _is_ai_matching_enabled() if use_semantic is None else bool(use_semantic)
+    semantic_similarity = _semantic_similarity(target_text, employee_text) if semantic_enabled else 0.0
     skill_overlap = _skill_overlap(required, employee_skills)
     experience_score = _experience_score(employee, min_experience)
     performance_score = performance_weight(getattr(employee, "performance_score", None))
+    title_alignment = _title_alignment(job_title, str(getattr(employee, "position", "") or ""))
 
-    if _is_ai_matching_enabled():
+    if semantic_enabled:
         final_score = (
-            0.4 * semantic_similarity
-            + 0.3 * skill_overlap
-            + 0.2 * experience_score
+            0.30 * semantic_similarity
+            + 0.30 * skill_overlap
+            + 0.15 * title_alignment
+            + 0.15 * experience_score
             + 0.1 * performance_score
         )
     else:
-        # Non-AI baseline for stable backend testing. since i disabled the AI for improvement
+        # Non-AI baseline keeps ranking usable when model signals are sparse.
         final_score = (
-            0.5 * skill_overlap
-            + 0.35 * experience_score
-            + 0.15 * performance_score
+            0.45 * skill_overlap
+            + 0.25 * title_alignment
+            + 0.20 * experience_score
+            + 0.10 * performance_score
         )
 
     return {
         "semantic_similarity": round(semantic_similarity, 4),
         "skill_overlap": round(skill_overlap, 4),
+        "title_alignment": round(title_alignment, 4),
         "experience_score": round(experience_score, 4),
         "performance_score": round(performance_score, 4),
         "final_score": round(final_score, 4),

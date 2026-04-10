@@ -8,10 +8,22 @@ NON_ALNUM_SKILL_RE= re.compile(r"[^a-z0-9+.#/\-\s]")
 VERSION_SUFFIX_RE=re.compile(r"(?<=\D)\d+(\.\d+)*$")
 
 PERFORMANCE_MAP = {
-    "superior": 1.0,
-    "accord parfait": 0.8,
-    "acceptable": 0.6,
-    "inacceptable": 0.4,
+    "exceptional": 1.0,
+    "exceeds": 0.95,
+    "excellent": 0.9,
+    "superior": 0.9,
+    "accord parfait": 0.85,
+    "fully meets": 0.8,
+    "good": 0.75,
+    "acceptable": 0.65,
+    "satisfactory": 0.6,
+    "90 day meets": 0.55,
+    "90-day meets": 0.55,
+    "n a too early to review": 0.5,
+    "n/a too early to review": 0.5,
+    "needs improvement": 0.3,
+    "inacceptable": 0.25,
+    "pip": 0.15,
     "non applicable": 0.2,
 }
 
@@ -96,10 +108,16 @@ def normalize_performance(raw: Any) -> float:
     text = to_text(raw).lower()
     if not text:
         return 0.0
-    if text in PERFORMANCE_MAP:
-        return PERFORMANCE_MAP[text]
+    normalized = re.sub(r"\s+", " ", text).strip()
+    normalized = normalized.replace("_", " ")
+    compact = re.sub(r"[-/]+", " ", normalized)
+    compact = re.sub(r"\s+", " ", compact).strip()
+    if normalized in PERFORMANCE_MAP:
+        return PERFORMANCE_MAP[normalized]
+    if compact in PERFORMANCE_MAP:
+        return PERFORMANCE_MAP[compact]
     try:
-        val = float(text)
+        val = float(normalized)
         if val > 1.0:
             val = val / 100.0 if val <= 100 else 1.0
         return max(0.0, min(1.0, val))
@@ -107,13 +125,17 @@ def normalize_performance(raw: Any) -> float:
         return 0.0
 
 
-def normalize_scalar(raw: Any, max_scale: float = 5.0) -> float:
+def normalize_scalar(raw: Any, max_scale: float = 5.0, default_if_missing: float = 0.0) -> float:
+    if raw is None:
+        return max(0.0, min(1.0, float(default_if_missing)))
+    if isinstance(raw, str) and not raw.strip():
+        return max(0.0, min(1.0, float(default_if_missing)))
     try:
         val = float(raw)
     except (TypeError, ValueError):
-        return 0.0
+        return max(0.0, min(1.0, float(default_if_missing)))
     if max_scale <= 0:
-        return 0.0
+        return max(0.0, min(1.0, float(default_if_missing)))
     if val > 1.0:
         val = val / max_scale
     return max(0.0, min(1.0, val))
@@ -128,6 +150,11 @@ def preprocess_employee(employee: Any) -> dict[str, Any]:
 
     skills = parse_skills(_get(employee, "skills", []))
 
+    raw_performance = _get(employee, "performance_score")
+    performance_score = normalize_performance(raw_performance)
+    if raw_performance is None or (isinstance(raw_performance, str) and not raw_performance.strip()):
+        performance_score = 0.5
+
     return {
         "id": _get(employee, "id"),
         "full_name": to_text(_get(employee, "full_name"))
@@ -140,9 +167,13 @@ def preprocess_employee(employee: Any) -> dict[str, Any]:
         "experience_years": years_between(hire_date),
         "tenure_years": years_between(hire_date, termination_date or date.today()),
         "currently_active": currently_active,
-        "performance_score": normalize_performance(_get(employee, "performance_score")),
-        "engagement_score": normalize_scalar(_get(employee, "engagement_survey"), max_scale=5.0),
-        "satisfaction_score": normalize_scalar(_get(employee, "emp_satisfaction"), max_scale=5.0),
+        "performance_score": float(performance_score),
+        "engagement_score": normalize_scalar(
+            _get(employee, "engagement_survey"), max_scale=5.0, default_if_missing=0.5
+        ),
+        "satisfaction_score": normalize_scalar(
+            _get(employee, "emp_satisfaction"), max_scale=5.0, default_if_missing=0.5
+        ),
     }
 
 

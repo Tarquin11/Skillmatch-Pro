@@ -43,6 +43,26 @@ def _get_bool_env(name: str, default: bool) -> bool:
         return bool(default)
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _resolve_database_url(raw_url: str, project_root: Path) -> str:
+    if not raw_url:
+        return raw_url
+
+    prefix = "sqlite:///"
+    if not raw_url.lower().startswith(prefix):
+        return raw_url
+
+    location = raw_url[len(prefix):]
+    if not location:
+        return raw_url
+
+    # Keep absolute sqlite URLs unchanged (POSIX-style or drive-letter path).
+    if location.startswith("/") or (len(location) > 1 and location[1] == ":"):
+        return raw_url
+
+    absolute = (project_root / location).resolve()
+    return f"{prefix}{absolute.as_posix()}"
+
 class Settings:
     PROJECT_NAME: str = "SkillMatch Pro"
     SECRET_KEY: str = _get_required_env("SECRET_KEY")
@@ -54,7 +74,7 @@ class Settings:
     LOGIN_MAX_FAILED_ATTEMPTS: int = int(os.getenv("LOGIN_MAX_FAILED_ATTEMPTS", "5"))
     LOGIN_LOCKOUT_BASE_SECONDS: int = int(os.getenv("LOGIN_LOCKOUT_BASE_SECONDS", "30"))
     LOGIN_LOCKOUT_MAX_SECONDS: int = int(os.getenv("LOGIN_LOCKOUT_MAX_SECONDS", "900"))
-    DATABASE_URL: str = _get_required_env("DATABASE_URL")
+    DATABASE_URL: str = _resolve_database_url(_get_required_env("DATABASE_URL"), env_path.parent)
     AI_MODEL_PATH: str = os.getenv("AI_MODEL_PATH", "artifacts/matcher.joblib")
     AI_MODEL_AUTOLOAD: bool = _get_bool_env("AI_MODEL_AUTOLOAD", True)
     AI_MODEL_VERSION: str = os.getenv("AI_MODEL_VERSION", "dev")
