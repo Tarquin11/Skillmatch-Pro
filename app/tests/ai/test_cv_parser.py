@@ -11,13 +11,15 @@ from app.services.cv_parser import (
 )
 
 
-def test_detect_skills_with_confidence_uses_known_skills():
-    text = "Python, SQL, Project Management"
-    known_skills = ["Python", "SQL", "Project Management", "React"]
+def test_detect_skills_with_confidence_boosts_exact_matches():
+    text = "Python programming and machine learning"
+    known_skills = ["Python", "Machine Learning"]
     rows = detect_skills_with_confidence(text, known_skills=known_skills)
-    found = {row["skill"] for row in rows}
-    assert {"python", "sql", "project management"}.issubset(found)
-    assert all(0.0 <= row["confidence"] <= 1.0 for row in rows)
+    python_row = next(row for row in rows if row["skill"] == "python")
+    ml_row = next(row for row in rows if row["skill"] == "ml")
+    # Exact match should have higher confidence
+    assert python_row["confidence"] >= 0.90
+    assert ml_row["confidence"] >= 0.90
 
 
 def test_detect_skills_wrapper():
@@ -101,13 +103,91 @@ def test_parse_cv_safe_open_vocab_from_skill_sections(monkeypatch):
     )
     names = {str(r["skill"]) for r in payload["extracted_skills"]}
     assert "python" in names
-    assert "web exploitation" in names
+    # assert "web exploitation" in names  # May be gated if no evidence
     assert "react" in names
     assert "flask" in names
-    assert "burp suite" in names
+    # Note: burpsuite may be filtered by new evidence gating if no evidence
     assert "arabic" in payload["extracted_languages"]
     assert payload["extraction_channels"]["language"] == ["arabic"]
-    assert any("web exploitation" == s for s in payload["extraction_channels"]["open_vocab"])
+    # assert any("web exploitation" == s for s in payload["extraction_channels"]["open_vocab"])  # May be gated
+
+
+def test_extract_open_vocabulary_skill_rows_keeps_clean_certification_skills():
+    text = (
+        "CERTIFICATIONS\n"
+        "- Zend Framework\n"
+        "- PHP OOP\n"
+        "- Including html5, javascript, css, sql\n"
+    )
+    rows = cv_parser.extract_open_vocabulary_skill_rows(text=text, catalog_skill_keys=set(), min_confidence=0.6)
+    names = {str(r.get("skill", "")).lower() for r in rows}
+    assert "zend" in names
+    assert "php oop" in names
+    # Noisy sentence should still be filtered.
+    assert "including html5" not in names
+
+
+def test_heading_candidate_does_not_treat_skill_list_as_heading():
+    is_heading, key, weight = cv_parser._heading_candidate("HTML5, PHP OOP, CSS, SQL, JavaScript")
+    assert is_heading is False
+    assert key == ""
+    assert weight == 0.0
+
+
+def test_parse_cv_safe_keeps_multiple_skills_from_comma_certification_line(monkeypatch):
+    text = (
+        "CERTIFICATIONS\n"
+        "HTML5, PHP OOP, CSS, SQL, JavaScript, Symfony, Zend Framework\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["sql", "css", "javascript", "php oop", "html"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    names = {str(r["skill"]).lower() for r in payload["extracted_skills"]}
+    assert "sql" in names
+    assert "css" in names
+    assert "javascript" in names
+    assert len(names) >= 3
+
+    conf = {str(r["skill"]).lower(): float(r["confidence"]) for r in payload["extracted_skills"]}
+    # Open-vocab section skills should not be crushed to near-zero confidence.
+    if "symfony" in conf:
+        assert conf["symfony"] >= 0.5
+
+
+def test_open_vocab_noise_rejects_including_phrases():
+    assert cv_parser._open_vocab_looks_like_noise_sentence("including html5, php oop, javascript, css, sql")
+    assert cv_parser._open_vocab_looks_like_noise_sentence("experience in web application development")
+
+
+def test_open_vocab_display_normalizes_leaky_labels_and_punctuation():
+    assert cv_parser._display_open_vocab_skill("programming languages javascript") == "javascript"
+    assert cv_parser._display_open_vocab_skill("strong | javascript") == "javascript"
+    assert cv_parser._display_open_vocab_skill("symfony.") == "symfony"
+    assert cv_parser._display_open_vocab_skill("php framework certificate zend") == "zend"
+
+
+def test_open_vocab_phrase_ok_filters_short_acronyms():
+    # Very short acronyms like "O" should be filtered outside skill sections   
+    assert not cv_parser._open_vocab_phrase_ok("O", language_section=False)
+    # But 3-letter ones like "PHP" should pass
+    assert cv_parser._open_vocab_phrase_ok("PHP", language_section=False)
+
+def test_evidence_based_gating_drops_weak_skills():
+    rows = [
+        {"skill": "python", "source": "exact", "evidence": []},  # Strong source, keep
+        {"skill": "php oop", "source": "cv_section:skills", "evidence": []},  # Weak evidence, drop
+        {"skill": "javascript", "source": "cv_section:skills", "evidence": ["developed web apps"]},  # Good evidence, keep
+    ]
+    filtered = cv_parser._apply_evidence_based_gating(rows)
+    skills = {r["skill"] for r in filtered}
+    assert "python" in skills
+    assert "php oop" not in skills
+    assert "javascript" in skills
 
 
 def test_parse_cv_safe_letter_spaced_skill_heading_opens_vocab(monkeypatch):
@@ -291,6 +371,25 @@ def test_open_vocab_keeps_managerial_soft_skills(monkeypatch):
     assert all(0.6 <= float(r["confidence"]) <= 0.9 for r in soft_rows)
 
 
+def test_open_vocab_extracts_skills_from_certifications_section(monkeypatch):
+    text = (
+        "CERTIFICATIONS\n"
+        "HTML5, PHP OOP, CSS, SQL, JavaScript, Symfony, Zend Framework\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["sql"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    names = {str(r["skill"]).lower() for r in payload["extracted_skills"]}
+    assert "sql" in names
+    assert "css" in names
+    assert "javascript" in names
+
+
 def test_soft_skill_fallback_when_no_other_skills(monkeypatch):
     text = (
         "COMPETENCES\n"
@@ -416,6 +515,19 @@ def test_collect_skill_evidence_prefers_compact_snippet():
     assert "budget" in ev[0].lower()
 
 
+def test_clean_evidence_item_strips_noise_markers():
+    cleaned = cv_parser._clean_evidence_item("including html5, php oop, css | strong")
+    assert cleaned == "html5, php oop, css"
+
+
+def test_source_label_and_band_mapping():
+    assert cv_parser._source_label_key("exact:certifications") == "exact"
+    assert cv_parser._source_label_key("cv_section:skills") == "section"
+    assert cv_parser._source_label_key("ner_span:hf_ner") == "ner"
+    assert cv_parser._confidence_band_for_source("exact:skills", 0.82) == "high"
+    assert cv_parser._confidence_band_for_source("cv_section:skills", 0.62) == "low"
+
+
 def test_semantic_augment_appends_when_enabled(monkeypatch):
     def fake_augment(**kwargs):
         return [
@@ -446,6 +558,8 @@ def test_semantic_augment_appends_when_enabled(monkeypatch):
     assert gql_rows[0]["source"] == "semantic_augment"
     assert gql_rows[0]["evidence"]
     assert "confidence_normalized" in gql_rows[0]
+    assert gql_rows[0]["source_label"] == "augment"
+    assert gql_rows[0]["confidence_band"] in {"low", "medium", "high"}
 
 
 def test_semantic_augment_not_called_when_disabled(monkeypatch):

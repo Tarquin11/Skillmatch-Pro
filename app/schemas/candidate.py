@@ -7,6 +7,8 @@ class CandidateSkillExtraction(StrictBaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     confidence_normalized: float = Field(default=1.0, ge=0.0, le=1.0)
     source: str
+    source_label: str | None = None
+    confidence_band: str | None = None
     evidence: List[str] = Field(default_factory=list)
 
 class CandidateLanguageExtraction(StrictBaseModel):

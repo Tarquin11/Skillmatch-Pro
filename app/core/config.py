@@ -63,7 +63,7 @@ class Settings:
     AI_CANARY_TRAFFIC_PERCENT: float = max(0.0, min(100.0, _get_float_env("AI_CANARY_TRAFFIC_PERCENT", 0.0)))
 
     CV_PARSER_MODEL_VERSION: str = os.getenv("CV_PARSER_MODEL_VERSION", "cv_parser_v1")
-    CV_PARSER_MIN_CONFIDENCE: float = max(0.0, min(1.0, _get_float_env("CV_PARSER_MIN_CONFIDENCE", 0.6)))
+    CV_PARSER_MIN_CONFIDENCE: float = max(0.0, min(1.0, _get_float_env("CV_PARSER_MIN_CONFIDENCE", 0.7)))
     CV_PARSER_USE_SEMANTIC: bool = _get_bool_env("CV_PARSER_USE_SEMANTIC", False)
     CV_PARSER_USE_HF_NER: bool = _get_bool_env("CV_PARSER_USE_HF_NER", True)
     CV_PARSER_USE_SEMANTIC_AUGMENT: bool = _get_bool_env("CV_PARSER_USE_SEMANTIC_AUGMENT", True)

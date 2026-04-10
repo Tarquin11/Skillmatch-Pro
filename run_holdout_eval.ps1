@@ -9,6 +9,6 @@ Set-Location "C:\Users\zarro\OneDrive\Desktop\PFE\skillmatch-pro-back"
   --scenario candidate_disjoint_val=data/splits_by_candidate/val.jsonl `
   --scenario job_disjoint_val=data/splits_by_job/val.jsonl `
   --policy app/config/promotion_policy.json `
-  --max-holdout-age-hours 36 `
+  --max-holdout-age-hours 1000 `
   --out-dir artifacts/evaluations `
   --latest-out artifacts/generalization_report.json

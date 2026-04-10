@@ -16,6 +16,8 @@ from app.services.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
+_stage_error = lambda stage, exc: f"{stage}:{type(exc).__name__}:{str(exc)}"
+
 _SKILL_HEADING_HINTS = (
     "skills",
     "technical skills",
@@ -34,7 +36,6 @@ _SKILL_HEADING_HINTS = (
     "libraries",
     "expertise",
     "proficiencies",
-    "certifications",
     "methodologies",
     "competences",
     "compétences",
@@ -45,6 +46,21 @@ _SKILL_HEADING_HINTS = (
     "framework",
     "bibliotheques",
     "bibliothèques",
+)
+_CERTIFICATION_HEADING_HINTS = (
+    "certification",
+    "certifications",
+    "certificat",
+    "certificats",
+    "certificate",
+    "certificates",
+    "license",
+    "licenses",
+    "diploma",
+    "diplomas",
+    "training",
+    "formation",
+    "formations",
 )
 _LANGUAGE_HEADING_HINTS = ("language", "languages", "langue", "langues", "idioma", "idiomas")
 _DURATION_PHRASE_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:months?|years?|yrs?)$", re.I)
@@ -88,8 +104,14 @@ _OPEN_VOCAB_BOILERPLATE = (
     "application de suivi",
     "real-time positioning",
     "positioning system",
+    "including html5",
+    "including php oop",
+    "including javascript",
+    "including css",
+    "including sql",
+    "including html",
+    "strong |",
 )
-
 _LANGUAGE_ALIAS_MAP = {
     "english": "english",
     "anglais": "english",
@@ -167,8 +189,6 @@ _TITLE_KEYWORDS = (
     "coordinateur",
     "coordonnateur",
 )
-
-# One-line section titles (normalized). Avoid treating skill bullets like "Python" as headings.
 _SINGLE_WORD_RESUME_HEADINGS = frozenset(
     {
         "skills",
@@ -253,6 +273,10 @@ def _is_language_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _LANGUAGE_HEADING_HINTS)
 
+def _is_certification_heading(section_key: str) -> bool:
+    key = _normalize_text(section_key)
+    return any(h in key for h in _CERTIFICATION_HEADING_HINTS)
+
 def _is_noise_skill_phrase(phrase: str) -> bool:
     p = _normalize_text(phrase)
     return bool(_DURATION_PHRASE_RE.fullmatch(p))
@@ -313,6 +337,7 @@ def extract_text(file_bytes, filename):
     
 def _normalize_text(text: str) -> str:
     normalized = (text or "").lower()
+    normalized = unicodedata.normalize("NFKD", normalized).encode("ascii", "ignore").decode("ascii")
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
     normalized = normalized.replace("\u00a0", " ").replace("\t", " ")
     lines = [
@@ -351,7 +376,6 @@ def _acronym(value: str) -> str:
 def _looks_like_letter_spaced_text(value: str) -> bool:
     parts = [p for p in value.strip().split() if p]
     alpha_parts = [p for p in parts if any(ch.isalpha() for ch in p)]
-    # "T O O L S" is 5 spaced letters; "S K I L L S" is 6 — both are common in styled CV PDFs.
     if len(alpha_parts) < 5:
         return False
     single = sum(1 for p in alpha_parts if len(p) == 1 and p.isalpha())
@@ -428,6 +452,11 @@ def _heading_candidate(raw_line: str) -> tuple[bool, str, float]:
         return False, "", 0.0
     if _looks_like_letter_spaced_text(line):
         line = _collapse_letter_spaced_text(line)
+
+    # Bullet lines are content items (skills/tasks), not section headers.
+    if any(line.startswith(prefix) for prefix in BULLET_PREFIXES):
+        return False, "", 0.0
+
     for prefix in BULLET_PREFIXES:
         if line.startswith(prefix):
             line = line[len(prefix):].strip()
@@ -435,6 +464,10 @@ def _heading_candidate(raw_line: str) -> tuple[bool, str, float]:
 
     trimmed = line.strip(":").strip()
     if not trimmed or len(trimmed) > 80:
+        return False, "", 0.0
+
+    # Comma/semicolon/pipe-heavy lines are almost always content lists, not headings.
+    if re.search(r"[,;|]", trimmed):
         return False, "", 0.0
 
     words = trimmed.split()
@@ -450,7 +483,6 @@ def _heading_candidate(raw_line: str) -> tuple[bool, str, float]:
     key = _normalize_text(trimmed)
     section_like = _matches_resume_section_heading(key, words)
 
-    # Short all-caps tokens (SQL, AWS, GCP) are usually skills, not section titles.
     short_all_caps_not_section = (
         not has_colon
         and not section_like
@@ -460,8 +492,19 @@ def _heading_candidate(raw_line: str) -> tuple[bool, str, float]:
         and trimmed.isupper()
     )
 
-    # Do not use loose "Title Case" alone — it mis-tags bullets like "Python" or "Web Exploitation".
-    is_heading = has_colon or section_like or (upper_ratio >= 0.6 and not short_all_caps_not_section)
+    short_upper_phrase_not_section = (
+        not has_colon
+        and not section_like
+        and upper_ratio >= 0.85
+        and 1 <= len(words) <= 3
+        and len(trimmed) <= 24
+    )
+
+    is_heading = has_colon or section_like or (
+        upper_ratio >= 0.6
+        and not short_all_caps_not_section
+        and not short_upper_phrase_not_section
+    )
     if not is_heading:
         return False, "", 0.0
 
@@ -529,7 +572,6 @@ def _year_from_token(token: str) -> int | None:
     return None
 
 _EMBEDDER: EmbeddingService | None = None
-# Skill vectors keyed by sorted known_skills tuple hash — reuse across CVs with same catalog slice.
 _EMBED_CACHE: dict[int, tuple[np.ndarray, list[str]]] = {}
 _HF_SKILL_NER_PIPE: Callable[[str], list[dict[str, Any]]] | None = None
 _HF_SKILL_NER_LOAD_ATTEMPTED = False
@@ -586,7 +628,6 @@ def _extract_hf_ner_spans(text: str, max_spans: int = 200) -> list[str]:
         span = str(row.get("word") or "").strip()
         if not span:
             continue
-        # Keep spans compact; parser does semantic remapping later.
         span = re.sub(r"\s+", " ", span).strip(" -,:.;")
         if not span:
             continue
@@ -602,8 +643,6 @@ def _extract_hf_ner_spans(text: str, max_spans: int = 200) -> list[str]:
 SEMANTIC_AUGMENT_MIN_SIMILARITY = 0.80
 SEMANTIC_AUGMENT_MAX_SPANS = 72
 SEMANTIC_AUGMENT_TOP_CANDIDATES = 3
-
-# Negation in the same line/span as a semantic candidate → reject (avoid "no experience in X").
 _SPAN_NEGATION_RE = re.compile(
     r"(?i)"
     r"(?:\bno\b|\bnot\b|\bnever\b|\bwithout\b|\blacking\b|\black\s+of\b|\bneither\b|\bnor\b|"
@@ -612,8 +651,6 @@ _SPAN_NEGATION_RE = re.compile(
     r"\bpas\s+de\b|\bpas\s+d['\u2019]|"
     r"\bni\s+l['\u2019]?\s*experience\b|\bzero\s+experience\b|\bz[eé]ro\s+exp[eé]rience\b)"
 )
-
-# Weak / hedged wording in evidence → downweight confidence (adversarial phrasing).
 _WEAK_HEDGE_RE = re.compile(
     r"(?i)\b("
     r"basic|familiar|familiarity|exposed|exposure|"
@@ -678,6 +715,44 @@ def attach_confidence_normalized(rows: list[dict[str, Any]]) -> None:
         except Exception:
             c = 0.0
         r["confidence_normalized"] = round(min(1.0, max(0.0, c / mx)), 4)
+
+
+def _source_conf_threshold(source: str, min_confidence: float) -> float:
+    """Post-merge confidence floor per extraction source."""
+    s = (source or "").strip().lower()
+    base = max(0.0, min(1.0, float(min_confidence)))
+    if s.startswith("sentence_text"):
+        return max(0.50, base - 0.10)
+    if s.startswith("sentence_bullet"):
+        return max(0.50, base - 0.08)
+    if s.startswith("softskill"):
+        return max(0.50, base - 0.08)
+    return -1.0
+
+
+def apply_post_merge_source_gate(rows: list[dict[str, Any]], min_confidence: float) -> tuple[list[dict[str, Any]], int]:
+    """Filter rows with source-aware confidence thresholds."""
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("skill"):
+            continue
+        try:
+            conf = float(row.get("confidence", 0.0))
+        except Exception:
+            conf = 0.0
+        try:
+            conf_norm = float(row.get("confidence_normalized", 0.0))
+        except Exception:
+            conf_norm = 0.0
+        src = str(row.get("source", ""))
+        floor = _source_conf_threshold(src, min_confidence=min_confidence)
+        if floor >= 0.0 and (conf + 1e-9 < floor) and (conf_norm < 0.58):
+            dropped += 1
+            continue
+        kept.append(row)
+    kept.sort(key=lambda r: (-float(r.get("confidence", 0.0)), str(r.get("skill", ""))))
+    return kept, dropped
 
 
 def _spans_for_semantic_augment(text: str) -> list[str]:
@@ -752,7 +827,6 @@ def augment_skills_semantically_gated(
         return []
 
     sims = span_vectors @ skill_vectors.T
-    # skill_key -> (best_sim, evidence_span, display_name)
     best_for_skill: dict[str, tuple[float, str, str]] = {}
 
     for i, span in enumerate(spans):
@@ -823,10 +897,10 @@ def _calibrate_confidence(raw_conf : float, source: str, section_weight: float) 
     raw_conf = max(0.001, min(0.999, raw_conf))
     source_key = (source or "").split(":")[0]
     source_weight = {
-        "exact": 1.0,
-        "synonym": 0.95,
+        "exact": 1.05,  
+        "synonym": 0.98,  
         "fuzzy": 0.90,
-        "semantic":0.92,
+        "semantic": 0.85,  
         "ner_span": 0.94,
         "legacy": 0.88,
     }.get(source_key, 0.92)
@@ -1153,6 +1227,32 @@ _NOISE_LINE_HINTS = (
     "http://",
     "https://",
 )
+_OPEN_VOCAB_LABEL_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"programming\s+languages?|"
+    r"technical\s+skills?|"
+    r"core\s+skills?|"
+    r"skills?|"
+    r"competences?|"
+    r"competences\s+techniques|"
+    r"technologies|"
+    r"tools?|"
+    r"frameworks?"
+    r")\s+",
+    re.IGNORECASE,
+)
+_OPEN_VOCAB_NOISE_PREFIX_RE = re.compile(
+    r"^(?:including|strong|advanced|expertise\s+in|experience\s+in)\s+",
+    re.IGNORECASE,
+)
+_OPEN_VOCAB_CERT_MARKER_RE = re.compile(
+    r"\b(?:certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|diplome|diplomes)\b",
+    re.IGNORECASE,
+)
+_EVIDENCE_NOISE_LEAD_RE = re.compile(
+    r"^(?:including|strong|advanced|expertise\s+in|experience\s+in)\s+",
+    re.IGNORECASE,
+)
 _SKILL_SENTENCE_PATTERNS: dict[str, str] = {
     r"\b(gestion de projet|gerer .*projet|gérer .*projet|chef de projet)\b": "project management",
     r"\b(planifier .*projet|planification|echeancier|échéancier|calendrier)\b": "planning",
@@ -1212,6 +1312,12 @@ def _open_vocab_looks_like_noise_sentence(low: str) -> bool:
     if _MONTH_NAME_RE.search(low) and _YEAR_TOKEN_RE.search(low):
         return True
     if re.search(r"\b\d{1,2}\s*[-–—/]\s*\d{1,2}\s+\w+\s+\d{4}\b", low):
+        return True
+    if "including" in low:
+        return True
+    if "experience in" in low:
+        return True
+    if "certificat" in low or "certification" in low or "diploma" in low:
         return True
     for frag in _OPEN_VOCAB_BOILERPLATE:
         if frag in low:
@@ -1344,7 +1450,7 @@ def _open_vocab_phrase_ok(raw: str, *, language_section: bool = False) -> bool:
     phrase = phrase.strip()
     if not phrase:
         return False
-    display = canonicalize_skill(phrase).strip()
+    display = _normalize_open_vocab_display(phrase)
     if not display:
         return False
     if _is_noise_skill_phrase(phrase):
@@ -1356,6 +1462,11 @@ def _open_vocab_phrase_ok(raw: str, *, language_section: bool = False) -> bool:
     toks = [t for t in re.split(r"\s+", low_core) if t]
     if toks and sum(1 for t in toks if _looks_high_noise_token(t)) >= max(1, len(toks) // 2):
         return False
+    if len(low_core) <= 2 and not language_section:
+        return False
+    if len(toks) == 1 and len(low_core) <= 4 and low_core.isupper() and not language_section:
+        if len(low_core) <= 2:
+            return False
     soft_key = low_core
     if soft_key in _SOFT_SKILL_ALLOWLIST:
         return True
@@ -1381,11 +1492,34 @@ def _open_vocab_phrase_ok(raw: str, *, language_section: bool = False) -> bool:
     return True
 
 
-def _display_open_vocab_skill(raw: str) -> str:
+def _normalize_open_vocab_display(raw: str) -> str:
     phrase = _strip_open_vocab_leading_junk(raw)
     phrase = _strip_parenthetical_qualifiers(phrase)
-    d = canonicalize_skill(phrase).strip()
-    return (d or phrase.strip())[:120]
+    display = canonicalize_skill(phrase).strip() or phrase.strip()
+    display = re.sub(r"\|+", " ", display)
+    display = re.sub(r"\s+", " ", display).strip(" .,:;|/\\-")
+    if not display:
+        return ""
+
+    # Strip common CV labels/prefixes that leak into extracted phrases.
+    prev = None
+    while display and display != prev:
+        prev = display
+        display = _OPEN_VOCAB_LABEL_PREFIX_RE.sub("", display).strip()
+        display = _OPEN_VOCAB_NOISE_PREFIX_RE.sub("", display).strip()
+
+    # If a certificate marker appears in the phrase, keep the tail skill token(s).
+    m = _OPEN_VOCAB_CERT_MARKER_RE.search(display)
+    if m and m.end() < len(display):
+        tail = display[m.end() :].strip(" .,:;|/\\-")
+        if tail:
+            display = tail
+
+    return display.strip(" .,:;|/\\-")[:120]
+
+
+def _display_open_vocab_skill(raw: str) -> str:
+    return _normalize_open_vocab_display(raw)
 
 
 def _normalize_language_name(raw: str) -> str:
@@ -1499,6 +1633,8 @@ def extract_open_vocabulary_skill_rows(
     min_confidence: float,
     max_rows: int = 80,
     rejected_out: list[str] | None = None,
+    known_skills: set[str] | None = None,
+    synonyms: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Emit skills read from skills/tools/languages (and related) sections, not limited to the DB catalog."""
     sections, section_weights = _extract_sections(text)
@@ -1506,11 +1642,10 @@ def extract_open_vocabulary_skill_rows(
     rows: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
     for phrase, section in section_phrases:
-        if not _is_skill_heading(section):
+        if not (_is_skill_heading(section) or _is_certification_heading(section)):
             continue
         lang_sec = _is_language_heading(section)
         if lang_sec:
-            # Languages are extracted in a dedicated channel.
             continue
         if not _open_vocab_phrase_ok(phrase, language_section=lang_sec):
             if rejected_out is not None:
@@ -1519,18 +1654,22 @@ def extract_open_vocabulary_skill_rows(
         display = _display_open_vocab_skill(phrase)
         if not display:
             continue
+        # Do not skip catalog terms here; merge stage will de-duplicate by skill key.
+        # Keeping them improves recall when catalog matcher misses a noisy line.
+        # if synonyms and any(display in syns for syns in synonyms.values()):
+        #     continue
         sk = _skill_key(display)
         if not sk or sk in catalog_skill_keys or sk in seen_keys:
             continue
         seen_keys.add(sk)
         w = float(section_weights.get(section, 0.9))
         w = max(0.75, min(1.1, w))
-        floor = max(float(min_confidence), 0.62)
+        floor = max(float(min_confidence), 0.60)
         wc = len(display.split())
         if wc <= 4:
-            conf = round(min(0.84, max(floor, 0.80 * w)), 2)
+            conf = round(min(0.72, max(floor, 0.64 * w)), 2)
         else:
-            conf = round(min(0.78, max(floor, 0.74 * w)), 2)
+            conf = round(min(0.68, max(floor, 0.60 * w)), 2)
         if conf < min_confidence:
             continue
         sec_slug = re.sub(r"[^a-z0-9]+", "_", _normalize_text(section)[:48]).strip("_") or "section"
@@ -1539,6 +1678,7 @@ def extract_open_vocabulary_skill_rows(
                 "skill": display,
                 "confidence": conf,
                 "source": f"cv_section:{sec_slug}",
+                "evidence": [f"section:{sec_slug}"],
             }
         )
         if len(rows) >= max_rows:
@@ -1603,11 +1743,9 @@ def extract_soft_skill_rows(
                 if canonical in strict_context_canon:
                     has_context = any(term in line_core for term in soft_context_terms)
                     wc = len(line_core.split())
-                    # Noisy long bullets often carry random appended keywords: be stricter.
                     if bullet and not _is_experience_heading(section) and wc > 6 and not has_context:
                         continue
                     if canonical in {"coordination", "communication"} and not _is_experience_heading(section):
-                        # Keep short explicit entries, reject narrative/noisy lines.
                         if wc > 3 and not has_context:
                             continue
                     if not (bullet or _is_experience_heading(section) or has_context):
@@ -1616,7 +1754,6 @@ def extract_soft_skill_rows(
                 if not sk or sk in seen:
                     continue
                 seen.add(sk)
-                # vary confidence by section relevance and lexical match strength
                 section_boost = 0.08 if (_is_experience_heading(section) or "projet" in sec_key or "project" in sec_key) else 0.04
                 match_boost = min(0.06, max(0.0, (len(hint.split()) - 1) * 0.015))
                 lexical_boost = (sum(ord(ch) for ch in canonical) % 4) * 0.01
@@ -1634,7 +1771,7 @@ def detect_skill_spans_with_ensemble(
     text: str,
     known_skills: Iterable[str],
     min_confidence: float = 0.6,
-    semantic_threshold: float = 0.72,
+    semantic_threshold: float = 0.75,
     max_rows: int = 30,
     use_hf_ner: bool = False,
 ) -> list[dict[str, Any]]:
@@ -1647,17 +1784,13 @@ def detect_skill_spans_with_ensemble(
     known_list = [str(k).strip() for k in known_skills if isinstance(k, str) and str(k).strip()]
     if not known_list:
         return []
-    skill_vectors, skill_names = _get_skill_embeddings(known_list)
-    embedder = _get_embedder()
-    if embedder is None or skill_vectors is None or not skill_names:
-        return []
 
     sections, section_weights = _extract_sections(text)
     section_phrases = _extract_section_phrases(sections)
     span_items: list[tuple[str, str]] = []
     seen_span: set[str] = set()
     for phrase, section in section_phrases:
-        if not _is_skill_heading(section) or _is_language_heading(section):
+        if not (_is_skill_heading(section) or _is_certification_heading(section)) or _is_language_heading(section):
             continue
         if not _open_vocab_phrase_ok(phrase):
             continue
@@ -1682,6 +1815,52 @@ def detect_skill_spans_with_ensemble(
     if not span_items:
         return []
 
+    skill_vectors, skill_names = _get_skill_embeddings(known_list)
+    embedder = _get_embedder()
+
+    floor = max(float(min_confidence), 0.68)
+    if embedder is None or skill_vectors is None or not skill_names:
+        # Offline-safe fallback for NER spans: lexical mapping to known skills.
+        out_fallback: list[dict[str, Any]] = []
+        seen_skill_fallback: set[str] = set()
+        known_pairs = [(skill, _skill_key(skill)) for skill in known_list]
+        for phrase, section in span_items:
+            phrase_key = _skill_key(phrase)
+            if not phrase_key:
+                continue
+            best_skill: str | None = None
+            best_ratio = 0.0
+            for skill, key in known_pairs:
+                if not key:
+                    continue
+                if phrase_key == key:
+                    ratio = 1.0
+                elif phrase_key in key or key in phrase_key:
+                    ratio = 0.92
+                else:
+                    ratio = SequenceMatcher(None, phrase_key, key).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_skill = skill
+            if not best_skill or best_ratio < 0.86:
+                continue
+            sk = _skill_key(best_skill)
+            if not sk or sk in seen_skill_fallback:
+                continue
+            seen_skill_fallback.add(sk)
+            conf = max(floor, min(0.90, 0.70 + (best_ratio - 0.86)))
+            out_fallback.append(
+                {
+                    "skill": best_skill,
+                    "confidence": round(conf, 2),
+                    "source": f"ner_span:{section}",
+                }
+            )
+            if len(out_fallback) >= max_rows:
+                break
+        out_fallback.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
+        return out_fallback
+
     phrases = [p for p, _ in span_items]
     try:
         phrase_vectors = np.asarray(embedder.generate_embeddings(phrases), dtype=np.float32)
@@ -1693,7 +1872,6 @@ def detect_skill_spans_with_ensemble(
     sims = phrase_vectors @ skill_vectors.T
     out: list[dict[str, Any]] = []
     seen_skill: set[str] = set()
-    floor = max(float(min_confidence), 0.62)
     for i, (_phrase, section) in enumerate(span_items):
         idx = int(np.argmax(sims[i]))
         sim = float(sims[i, idx])
@@ -1738,6 +1916,47 @@ def _source_channel_family(source: str) -> str:
     if s.startswith("legacy"):
         return "legacy"
     return "other"
+
+
+def _source_label_key(source: str) -> str:
+    fam = _source_channel_family(source)
+    if fam == "catalog":
+        return "exact"
+    if fam == "open_vocab":
+        return "section"
+    if fam == "ner":
+        return "ner"
+    if fam == "semantic":
+        return "semantic"
+    if fam == "semantic_augment":
+        return "augment"
+    if fam.startswith("sentence"):
+        return "sentence"
+    if fam == "softskill":
+        return "softskill"
+    if fam == "legacy":
+        return "legacy"
+    return "other"
+
+
+def _confidence_band_for_source(source: str, confidence: float) -> str:
+    fam = _source_channel_family(source)
+    c = max(0.0, min(1.0, float(confidence)))
+    if fam in {"catalog", "semantic", "ner"}:
+        if c >= 0.78:
+            return "high"
+        if c >= 0.64:
+            return "medium"
+        return "low"
+    if fam in {"open_vocab", "sentence_bullet", "sentence_text", "semantic_augment"}:
+        if c >= 0.70:
+            return "medium"
+        return "low"
+    if fam in {"softskill", "legacy"}:
+        if c >= 0.72:
+            return "medium"
+        return "low"
+    return "low"
 
 
 def _merge_skill_rows(
@@ -1820,7 +2039,7 @@ def _skill_in_bullet_lines(skill: str, text: str) -> bool:
 
 def _skill_in_skill_section_lines(skill: str, sections: dict[str, list[str]]) -> bool:
     for sec, lines in sections.items():
-        if not _is_skill_heading(sec):
+        if not (_is_skill_heading(sec) or _is_certification_heading(sec)):
             continue
         for line in lines:
             if _skill_line_hit(skill, line):
@@ -1936,7 +2155,14 @@ def enrich_skill_confidence_rows(
         score = base + freq_boost + source_boost + cross_section_boost + dual_context_boost
         score -= weak_penalty + rarity_penalty
         score = max(0.52, min(0.94, score))
-        if cal_on:
+        calibratable_source = (
+            source.startswith("exact")
+            or source.startswith("fuzzy")
+            or source == "synonym"
+            or source.startswith("semantic")
+            or source.startswith("ner_span")
+        )
+        if cal_on and calibratable_source:
             score = apply_platt_on_unit_interval(score, cal_a, cal_b)
         upd = raw
         upd["confidence"] = round(max(0.01, min(0.99, score)), 2)
@@ -2019,9 +2245,31 @@ def build_skill_graph(skills: list[str], text: str) -> dict[str, dict[str, Any]]
 
 def _trim_evidence_fragment(frag: str, max_len: int = 88) -> str:
     s = re.sub(r"\s+", " ", (frag or "").strip())
+    s = re.sub(r"\|+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip(" .,:;|/\\-")
+    s = _EVIDENCE_NOISE_LEAD_RE.sub("", s).strip()
+    # Remove leftover single-char garbage prefixes from OCR merges: "g html5, ..."
+    s = re.sub(r"^[a-z]\s+(?=[a-z0-9]{3,})", "", s, flags=re.IGNORECASE)
+    # Trim dangling generic noise tail words.
+    s = re.sub(r"\b(including|strong|advanced)\b$", "", s, flags=re.IGNORECASE).strip(" .,:;|/\\-")
     if len(s) <= max_len:
         return s
     return s[: max_len - 3].rstrip() + "..."
+
+
+def _clean_evidence_item(item: str) -> str:
+    s = str(item or "").strip()
+    if not s:
+        return ""
+    if s.startswith("section:"):
+        return s
+    s = _trim_evidence_fragment(s)
+    if not s:
+        return ""
+    low = _normalize_text(s)
+    if low in {"strong", "including", "advanced", "n/a", "na"}:
+        return ""
+    return s
 
 
 def _expand_snippet_with_verb_prefix(norm_segment: str, m: re.Match[str]) -> str:
@@ -2102,8 +2350,9 @@ def _collect_skill_evidence(skill: str, text: str, max_items: int = 2) -> list[s
         if not _skill_line_hit(skill, line):
             continue
         chunk = _extract_evidence_chunk(skill, line)
-        if chunk and chunk not in evidence:
-            evidence.append(chunk)
+        cleaned = _clean_evidence_item(chunk or "")
+        if cleaned and cleaned not in evidence:
+            evidence.append(cleaned)
         if len(evidence) >= max_items:
             break
     return evidence
@@ -2242,8 +2491,22 @@ def detect_skills(text: str, known_skills: Iterable[str] | None = None) -> list[
         return []
     return [row["skill"] for row in detect_skills_with_confidence(text, known_skills)]
 
-def _stage_error(stage: str, exc: Exception) -> str:
-    return f"{stage}:{exc.__class__.__name__}"
+def _apply_evidence_based_gating(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Filter out skills without sufficient evidence, except for strong sources."""
+    strong_sources = {"exact", "fuzzy", "synonym"}  
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        source = str(row.get("source", ""))
+        evidence = row.get("evidence", [])
+        conf = float(row.get("confidence", 0))
+        if source.startswith("cv_section:") or source.startswith("ner_span:") or source.startswith("semantic_augment"):
+            if not evidence and conf < 0.65:
+                continue
+        elif source.startswith("sentence_"):
+            if not evidence:
+                continue
+        out.append(row)
+    return out
 
 def parse_cv_safe(
     file_bytes: bytes,
@@ -2395,6 +2658,7 @@ def parse_cv_safe(
             catalog_skill_keys=catalog_keys,
             min_confidence=safe_min_conf,
             rejected_out=rejected_project_phrases,
+            known_skills=set(k.lower() for k in skills_list),
         )
         ner_rows = detect_skill_spans_with_ensemble(
             text=text,
@@ -2446,11 +2710,27 @@ def parse_cv_safe(
             enhanced = dict(row)
             prior_ev = list(enhanced.get("evidence") or [])
             collected = _collect_skill_evidence(str(row.get("skill", "")), text=text)
-            enhanced["evidence"] = list(dict.fromkeys(prior_ev + collected))[:3]
+            cleaned_evidence: list[str] = []
+            for ev in prior_ev + collected:
+                c_ev = _clean_evidence_item(str(ev or ""))
+                if c_ev and c_ev not in cleaned_evidence:
+                    cleaned_evidence.append(c_ev)
+            enhanced["evidence"] = cleaned_evidence[:3]
+            src = str(enhanced.get("source", ""))
+            try:
+                conf_val = float(enhanced.get("confidence", 0.0))
+            except Exception:
+                conf_val = 0.0
+            enhanced["source_label"] = _source_label_key(src)
+            enhanced["confidence_band"] = _confidence_band_for_source(src, conf_val)
             rows_with_evidence.append(enhanced)
         rows = rows_with_evidence
+        rows = _apply_evidence_based_gating(rows)
         apply_weak_hedge_penalty_to_rows(rows)
         attach_confidence_normalized(rows)
+        rows, dropped_by_source_gate = apply_post_merge_source_gate(rows, min_confidence=safe_min_conf)
+        if dropped_by_source_gate:
+            result["warnings"].append(f"post_merge_source_gate_dropped:{dropped_by_source_gate}")
 
         result["extracted_skills"] = rows
         result["skills"] = [
@@ -2507,7 +2787,6 @@ def parse_cv_safe(
         if budget_hit:
             result["warnings"].append("skills_time_budget_hit")
             if not result["skills"]:
-                # Budget pressure is only quality-degrading when extraction returns no skills.
                 result["degraded"] = True
     except Exception as exc:
         result["degraded"] = True
@@ -2520,6 +2799,10 @@ def parse_cv_safe(
             ]
             apply_weak_hedge_penalty_to_rows(legacy_rows)
             attach_confidence_normalized(legacy_rows)
+            for row in legacy_rows:
+                src = str(row.get("source", "legacy"))
+                row["source_label"] = _source_label_key(src)
+                row["confidence_band"] = _confidence_band_for_source(src, float(row.get("confidence", 0.0)))
             result["extracted_skills"] = legacy_rows
             result["skills_grouped"] = group_skills(result["extracted_skills"])
             result["skill_hierarchy"] = build_skill_hierarchy(result["skills"])
