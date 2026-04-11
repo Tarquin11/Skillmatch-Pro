@@ -1,6 +1,7 @@
 from math import ceil
 from datetime import date
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_active_user
 from app.db.database import get_db
@@ -111,10 +112,14 @@ def rank_candidates(
     page_size: int | None = Query(default=None, ge=1, le=200),
     sort_by: str = Query(default="score", pattern="^(score|name|title|experience)$"),
     sort_direction: str = Query(default="desc", pattern="^(asc|desc)$"),
+    candidate_scope: str = Query(default="all", pattern="^(all|candidates)$"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    employees = db.query(Employee).all()
+    query = db.query(Employee)
+    if candidate_scope == "candidates":
+        query = query.filter(func.lower(func.coalesce(Employee.recruitment_source, "")) == "cv_upload")
+    employees = query.all()
     routing_key = f"user:{getattr(current_user, 'id', 'na')}|{getattr(current_user, 'email', '')}"
 
     ranked_rows = inference_service.rank_candidates(

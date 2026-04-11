@@ -59,8 +59,6 @@ _CERTIFICATION_HEADING_HINTS = (
     "diploma",
     "diplomas",
     "training",
-    "formation",
-    "formations",
 )
 _LANGUAGE_HEADING_HINTS = ("language", "languages", "langue", "langues", "idioma", "idiomas")
 _DURATION_PHRASE_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:months?|years?|yrs?)$", re.I)
@@ -168,6 +166,12 @@ _EDUCATION_HEADING_HINTS = (
     "school",
     "university",
     "college",
+    "formation",
+    "formations",
+    "diploma",
+    "diplomas",
+    "diplome",
+    "diplomes",
 )
 _TITLE_KEYWORDS = (
     "engineer",
@@ -249,6 +253,12 @@ _MULTI_WORD_RESUME_HEADINGS = (
     "compétences techniques",
     "experience professionnelle",
     "expérience professionnelle",
+    "competences particulieres",
+    "compétences particulières",
+    "activite extra professionnelle",
+    "activite extra-professionnelle",
+    "activites extra professionnelles",
+    "activites extra-professionnelles",
 )
 
 BULLET_PREFIXES = ("-", "*", "•", "â€¢")
@@ -267,6 +277,63 @@ DEFAULT_SKILL_TIME_BUDGET_SECONDS = 0.75
 def _is_skill_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _SKILL_HEADING_HINTS)
+
+
+_TECHNICAL_HEADING_HINTS = (
+    "skill",
+    "skills",
+    "tech",
+    "technical",
+    "technique",
+    "techniques",
+    "informatique",
+    "informatiques",
+    "software",
+    "tools",
+    "tool",
+    "technologies",
+    "technology",
+    "framework",
+    "frameworks",
+    "stack",
+    "programming",
+    "developpement",
+    "development",
+    "devops",
+    "cloud",
+    "data",
+    "database",
+    "cyber",
+    "security",
+    "securite",
+    "web",
+    "mobile",
+)
+
+FR_NOISE_WORDS = {
+    "en",
+    "de", 
+    "le", 
+    "la", 
+    "des", 
+    "pour",
+    "dans", 
+    "niveau", 
+    "obtenu", 
+    "notions", 
+    "maitrise", 
+    "pratique",
+    "divers", 
+    "particulieres"
+}
+
+def _is_technical_heading(section_key: str) -> bool:
+    key = _normalize_text(section_key)
+    if not key:
+        return False
+    if re.search(r"\bit\b", key):
+        return True
+    return any(h in key for h in _TECHNICAL_HEADING_HINTS)
 
 
 def _is_language_heading(section_key: str) -> bool:
@@ -400,6 +467,21 @@ def _matches_resume_section_heading(key: str, words: list[str]) -> bool:
     for phrase in _MULTI_WORD_RESUME_HEADINGS:
         if key == phrase or key.startswith(phrase + " ") or key.endswith(" " + phrase):
             return True
+    if len(words) <= 4:
+        first = _normalize_text(words[0])
+        if first in (
+            "competence",
+            "competences",
+            "langue",
+            "langues",
+            "formation",
+            "formations",
+            "activite",
+            "activites",
+            "certification",
+            "certifications",
+        ):
+            return True
     if len(words) >= 2:
         last = _normalize_text(words[-1])
         if last in (
@@ -431,9 +513,26 @@ def _matches_resume_section_heading(key: str, words: list[str]) -> bool:
 
 def _build_skill_index(known_skills: Iterable[str]) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
+    catalog_noise_hints = (
+        "lycee",
+        "lycée",
+        "universite",
+        "université",
+        "baccalaureat",
+        "baccalauréat",
+        "ecole",
+        "école",
+        "high school",
+        "school",
+        "college",
+        "campus",
+    )
     for raw in known_skills or []:
         canonical = canonicalize_skill(raw)
         if not canonical:
+            continue
+        canonical_low = _normalize_text(canonical)
+        if any(h in canonical_low for h in catalog_noise_hints) and len(canonical_low.split()) >= 2:
             continue
         skill_key= _skill_key(canonical)
         if not skill_key:
@@ -1044,6 +1143,8 @@ def detect_skills_with_confidence(
                 break
             if _is_noise_skill_phrase(phrase):
                 continue
+            if _is_education_heading(section):
+                continue
             phrase_key = _skill_key(phrase)
             if not phrase_key:
                 continue
@@ -1103,6 +1204,14 @@ _GENERIC_OPEN_VOCAB_DROP = frozenset(
         "na",
         "some",
         "many",
+        "niveau",
+        "obtenu",
+        "obtenu en",
+        "pratique de",
+        "pratiques de",
+        "notions",
+        "connaissances en",
+        "maitrise de",
     }
 )
 _SOFT_SKILL_ALLOWLIST = frozenset(
@@ -1248,6 +1357,34 @@ _OPEN_VOCAB_NOISE_PREFIX_RE = re.compile(
 _OPEN_VOCAB_CERT_MARKER_RE = re.compile(
     r"\b(?:certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|diplome|diplomes)\b",
     re.IGNORECASE,
+)
+_INLINE_LABEL_SPLIT_RE = re.compile(r"^\s*([^:]{2,64}?)\s*:\s*(.+?)\s*$")
+_LANGUAGE_PHRASE_STOPWORDS = frozenset(
+    {
+        "langue",
+        "langues",
+        "language",
+        "languages",
+        "notion",
+        "notions",
+        "niveau",
+        "level",
+        "courant",
+        "courante",
+        "fluent",
+        "intermediaire",
+        "intermediate",
+        "native",
+        "mother",
+        "tongue",
+        "de",
+        "d",
+        "du",
+        "des",
+        "en",
+        "et",
+        "and",
+    }
 )
 _EVIDENCE_NOISE_LEAD_RE = re.compile(
     r"^(?:including|strong|advanced|expertise\s+in|experience\s+in)\s+",
@@ -1522,6 +1659,43 @@ def _display_open_vocab_skill(raw: str) -> str:
     return _normalize_open_vocab_display(raw)
 
 
+def _split_inline_labeled_phrase(raw: str) -> tuple[str, str]:
+    text = (raw or "").strip()
+    if not text:
+        return "", ""
+    m = _INLINE_LABEL_SPLIT_RE.match(text)
+    if not m:
+        return "", text
+    label = _normalize_text(m.group(1))
+    tail = m.group(2).strip()
+    return label, tail
+
+
+def _looks_like_language_phrase(raw: str) -> bool:
+    low = _normalize_text(raw)
+    low = unicodedata.normalize("NFKD", low).encode("ascii", "ignore").decode("ascii")
+    low = re.sub(r"[^a-z0-9\s]", " ", low)
+    low = re.sub(r"\s+", " ", low).strip()
+    if not low:
+        return False
+    toks = [t for t in low.split() if t]
+    if not toks:
+        return False
+    core = [
+        t
+        for t in toks
+        if t not in _LANGUAGE_PHRASE_STOPWORDS and not _CEFR_RE.fullmatch(t.upper())
+    ]
+    if not core or len(core) > 3:
+        return False
+    candidate = " ".join(core)
+    if candidate in _LANGUAGE_ALIAS_MAP_NORM:
+        return True
+    if core[0] in _LANGUAGE_ALIAS_MAP_NORM:
+        return True
+    return False
+
+
 def _normalize_language_name(raw: str) -> str:
     low = _normalize_text(raw)
     low = unicodedata.normalize("NFKD", low).encode("ascii", "ignore").decode("ascii")
@@ -1641,29 +1815,22 @@ def extract_open_vocabulary_skill_rows(
     section_phrases = _extract_section_phrases(sections)
     rows: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
-    for phrase, section in section_phrases:
-        if not (_is_skill_heading(section) or _is_certification_heading(section)):
-            continue
-        lang_sec = _is_language_heading(section)
-        if lang_sec:
-            continue
-        if not _open_vocab_phrase_ok(phrase, language_section=lang_sec):
+
+    def _append_candidate(candidate_phrase: str, sec_key: str, *, base_weight: float) -> None:
+        if len(rows) >= max_rows:
+            return
+        if not _open_vocab_phrase_ok(candidate_phrase, language_section=False):
             if rejected_out is not None:
-                rejected_out.append(phrase.strip()[:120])
-            continue
-        display = _display_open_vocab_skill(phrase)
-        if not display:
-            continue
-        # Do not skip catalog terms here; merge stage will de-duplicate by skill key.
-        # Keeping them improves recall when catalog matcher misses a noisy line.
-        # if synonyms and any(display in syns for syns in synonyms.values()):
-        #     continue
+                rejected_out.append(candidate_phrase.strip()[:120])
+            return
+        display = _display_open_vocab_skill(candidate_phrase)
+        if not display or _looks_like_language_phrase(display):
+            return
         sk = _skill_key(display)
         if not sk or sk in catalog_skill_keys or sk in seen_keys:
-            continue
+            return
         seen_keys.add(sk)
-        w = float(section_weights.get(section, 0.9))
-        w = max(0.75, min(1.1, w))
+        w = max(0.75, min(1.1, float(base_weight)))
         floor = max(float(min_confidence), 0.60)
         wc = len(display.split())
         if wc <= 4:
@@ -1671,8 +1838,8 @@ def extract_open_vocabulary_skill_rows(
         else:
             conf = round(min(0.68, max(floor, 0.60 * w)), 2)
         if conf < min_confidence:
-            continue
-        sec_slug = re.sub(r"[^a-z0-9]+", "_", _normalize_text(section)[:48]).strip("_") or "section"
+            return
+        sec_slug = re.sub(r"[^a-z0-9]+", "_", _normalize_text(sec_key)[:48]).strip("_") or "section"
         rows.append(
             {
                 "skill": display,
@@ -1681,8 +1848,67 @@ def extract_open_vocabulary_skill_rows(
                 "evidence": [f"section:{sec_slug}"],
             }
         )
+
+    for phrase, section in section_phrases:
+        inline_label, inline_tail = _split_inline_labeled_phrase(phrase)
+        section_is_cert = _is_certification_heading(section)
+        section_is_skill = _is_skill_heading(section)
+        section_is_technical = section_is_cert or _is_technical_heading(section)
+        inline_is_cert = bool(inline_label) and _is_certification_heading(inline_label)
+        inline_is_skill = bool(inline_label) and _is_skill_heading(inline_label)
+        inline_is_technical = inline_is_cert or (inline_is_skill and _is_technical_heading(inline_label))
+        if not ((section_is_skill or section_is_cert) or (inline_is_skill or inline_is_cert)):
+            continue
+        lang_sec = _is_language_heading(section)
+        inline_lang = bool(inline_label) and _is_language_heading(inline_label)
+        if lang_sec or inline_lang:
+            continue
+        if _is_education_heading(section) and not inline_is_technical:
+            continue
+        # Skip generic skill buckets unless an inline technical label is present.
+        if not section_is_technical and not inline_is_technical:
+            continue
+        candidate_phrase = inline_tail if inline_is_technical and inline_tail else phrase
+        w = float(section_weights.get(section, 0.9))
+        if inline_is_skill and not section_is_skill:
+            w = max(w, 0.95)
+        sec_key = inline_label if (inline_is_skill and not section_is_skill) else section
+        _append_candidate(candidate_phrase, sec_key, base_weight=w)
         if len(rows) >= max_rows:
             break
+
+    if len(rows) < max_rows:
+        for raw_line in (text or "").splitlines()[:MAX_LINES]:
+            if len(rows) >= max_rows:
+                break
+            line = raw_line[:MAX_LINE_CHARS].strip()
+            if not line:
+                continue
+            for prefix in BULLET_PREFIXES:
+                if line.startswith(prefix):
+                    line = line[len(prefix):].strip()
+                    break
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            if not inline_label or not inline_tail:
+                continue
+            if _is_language_heading(inline_label):
+                continue
+            if _is_certification_heading(inline_label):
+                is_inline_technical = True
+            elif _is_skill_heading(inline_label):
+                is_inline_technical = _is_technical_heading(inline_label)
+            else:
+                is_inline_technical = False
+            if not is_inline_technical:
+                continue
+            for part in re.split(r"[,\|;/&]+", inline_tail):
+                phrase = part.strip()
+                if not phrase:
+                    continue
+                _append_candidate(phrase, inline_label, base_weight=0.95)
+                if len(rows) >= max_rows:
+                    break
+
     rows.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
     return rows
 

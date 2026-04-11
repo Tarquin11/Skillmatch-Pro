@@ -364,8 +364,8 @@ def test_open_vocab_keeps_managerial_soft_skills(monkeypatch):
     )
     names = {str(r["skill"]) for r in payload["extracted_skills"]}
     assert "leadership" in names
-    assert "relation client" in names
-    assert "capacite d adaptation" in names
+    assert "customer relationship" in names
+    assert "adaptability" in names
     assert payload["extraction_channels"]["soft_skill"]
     soft_rows = [r for r in payload["extracted_skills"] if str(r.get("source", "")).startswith("softskill")]
     assert all(0.6 <= float(r["confidence"]) <= 0.9 for r in soft_rows)
@@ -388,6 +388,85 @@ def test_open_vocab_extracts_skills_from_certifications_section(monkeypatch):
     assert "sql" in names
     assert "css" in names
     assert "javascript" in names
+
+
+def test_open_vocab_extracts_inline_french_skill_labels_without_section_heading():
+    text = (
+        "PROFIL\n"
+        "Candidate polyvalente\n"
+        "Compétences informatiques : internet, traitement de texte, PAO, montage vidéo, Sketchup\n"
+        "Langues : anglais courant, allemand, notions d'italien\n"
+    )
+    rows = cv_parser.extract_open_vocabulary_skill_rows(
+        text=text,
+        catalog_skill_keys=set(),
+        min_confidence=0.6,
+    )
+    names = {str(r.get("skill", "")).lower() for r in rows}
+    assert "traitement de texte" in names
+    assert "montage video" in names
+    assert "sketchup" in names
+    assert "allemand" not in names
+    assert "notions d italien" not in names
+
+
+def test_open_vocab_skips_hobby_phrases_in_generic_competences_bucket():
+    text = (
+        "COMPETENCES PARTICULIERES\n"
+        "- Pratiques de divers arts plastiques : aquarelle, linogravure, couture\n"
+        "- Competences informatiques : internet, tableur, sketchup\n"
+        "- Competences en cuisine\n"
+    )
+    rows = cv_parser.extract_open_vocabulary_skill_rows(
+        text=text,
+        catalog_skill_keys=set(),
+        min_confidence=0.6,
+    )
+    names = {str(r.get("skill", "")).lower() for r in rows}
+    assert "internet" in names
+    assert "tableur" in names
+    assert "sketchup" in names
+    assert "aquarelle" not in names
+    assert "linogravure" not in names
+    assert "couture" not in names
+    assert "en cuisine" not in names
+
+
+def test_parse_cv_safe_handles_french_competences_particulieres_without_education_leak(monkeypatch):
+    text = (
+        "FORMATION\n"
+        "BEP au lycee Blaringhem a Bethune\n"
+        "Compétences particulières\n"
+        "- Langues : anglais courant, allemand, notions d'italien, notions de russe\n"
+        "- Compétences informatiques : internet, traitement de texte, tableur (Excel), Sketchup, montage vidéo\n"
+        "Activité extra-professionnelle\n"
+        "- Participation à des ateliers d'art\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_a, **_k: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=[],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    names = {str(r["skill"]).lower() for r in payload["extracted_skills"]}
+    assert "traitement de texte" in names
+    assert "sketchup" in names
+    assert "au lycee blaringhem a bethune" not in names
+    assert "allemand" not in names
+    assert {"english", "german", "italian", "russian"}.issubset(set(payload["extracted_languages"]))
+
+
+def test_detect_skills_with_confidence_ignores_education_catalog_noise():
+    text = "FORMATION\nBEP au lycee blaringhem a bethune\n"
+    rows = detect_skills_with_confidence(
+        text=text,
+        known_skills=["au lycee blaringhem a bethune"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    assert rows == []
 
 
 def test_soft_skill_fallback_when_no_other_skills(monkeypatch):

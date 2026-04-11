@@ -1,5 +1,6 @@
 from __future__ import annotations
 import re
+import unicodedata
 from datetime import date, datetime
 from typing import Any,Iterable
 
@@ -67,6 +68,8 @@ def years_between(start: date | None, end: date | None = None) -> float:
 
 def normalize_skill_name(skill: Any) -> str:
     value = to_text(skill).lower().replace("&"," and ")
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(ch for ch in value if not unicodedata.combining(ch))
     value = NON_ALNUM_SKILL_RE.sub(" ", value)
     value = re.sub(r"\s+", " ", value).strip()
     value = VERSION_SUFFIX_RE.sub("", value).strip()

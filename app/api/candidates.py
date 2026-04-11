@@ -6,7 +6,7 @@ import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,7 @@ from app.db.database import get_db
 from app.models.Employee_skill import EmployeeSkill
 from app.models.employee import Employee
 from app.models.skill import Skill
-from app.schemas.candidate import CandidateListItem, CandidateUploadRespose
+from app.schemas.candidate import CandidateListItem, CandidateUpdateRequest, CandidateUploadRespose
 from app.schemas.common import ErrorResponse
 from app.schemas.listing import ListQuery
 from app.services.cv_parser import parse_cv_safe
@@ -117,6 +117,7 @@ def _candidate_item_from_employee(employee: Employee) -> CandidateListItem:
         uploaded_at = employee.created_at.isoformat()
     return CandidateListItem(
         id=int(employee.id),
+        employee_number=str(employee.employee_number or "").strip(),
         full_name=str(employee.full_name or "").strip() or "Candidate Upload",
         email=str(employee.email or "").strip(),
         predicted_title=(str(employee.position or "").strip() or None),
@@ -124,6 +125,34 @@ def _candidate_item_from_employee(employee: Employee) -> CandidateListItem:
         skills=skills,
         uploaded_at=uploaded_at,
     )
+
+
+def _get_candidate_or_404(db: Session, candidate_id: int) -> Employee:
+    candidate = db.get(Employee, candidate_id)
+    if candidate is None or str(candidate.recruitment_source or "").strip().lower() != "cv_upload":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "candidate_not_found",
+                "message": "Candidate not found.",
+            },
+        )
+    return candidate
+
+
+def _normalize_skill_names(raw_skills: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_skills:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(name)
+    return cleaned
 
 
 def _persist_candidate_profile(
@@ -203,6 +232,92 @@ def list_candidates(
         limit=params.limit,
     ).all()
     return [_candidate_item_from_employee(row) for row in rows]
+
+
+@router.patch(
+    "/{candidate_id}",
+    response_model=CandidateListItem,
+    responses={
+        400: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+    },
+)
+def update_candidate(
+    candidate_id: int,
+    payload: CandidateUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    candidate = _get_candidate_or_404(db, candidate_id)
+    updates = payload.model_dump(exclude_unset=True)
+
+    if "full_name" in updates:
+        full_name = str(updates.get("full_name") or "").strip()
+        if not full_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "invalid_candidate_name", "message": "Candidate name cannot be empty."},
+            )
+        first_name, last_name = _split_first_last_name(full_name)
+        candidate.full_name = full_name
+        candidate.first_name = first_name
+        candidate.last_name = last_name
+
+    if "employee_number" in updates:
+        employee_number = str(updates.get("employee_number") or "").strip()
+        if not employee_number:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "invalid_candidate_id", "message": "Candidate ID cannot be empty."},
+            )
+        duplicate = (
+            db.query(Employee)
+            .filter(Employee.employee_number == employee_number, Employee.id != int(candidate.id))
+            .first()
+        )
+        if duplicate is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "employee_number_already_exists",
+                    "message": "Candidate ID already exists.",
+                },
+            )
+        candidate.employee_number = employee_number
+
+    if "skills" in updates:
+        normalized_skills = _normalize_skill_names(updates.get("skills") or [])
+        db.query(EmployeeSkill).filter(EmployeeSkill.employee_id == int(candidate.id)).delete(synchronize_session=False)
+        for skill_name in normalized_skills:
+            key = skill_name.lower()
+            skill = db.query(Skill).filter(func.lower(Skill.name) == key).first()
+            if skill is None:
+                skill = Skill(name=skill_name)
+                db.add(skill)
+                db.flush()
+            db.add(EmployeeSkill(employee_id=int(candidate.id), skill_id=int(skill.id), level=3))
+
+    db.commit()
+    db.refresh(candidate)
+    return _candidate_item_from_employee(candidate)
+
+
+@router.delete(
+    "/{candidate_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={
+        404: {"model": ErrorResponse},
+    },
+)
+def delete_candidate(
+    candidate_id: int,
+    db: Session = Depends(get_db),
+):
+    candidate = _get_candidate_or_404(db, candidate_id)
+    db.delete(candidate)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

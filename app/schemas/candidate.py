@@ -57,9 +57,16 @@ class CandidateUploadRespose(StrictBaseModel):
 
 class CandidateListItem(StrictBaseModel):
     id: int
+    employee_number: str
     full_name: str
     email: str
     predicted_title: str | None = None
     predicted_experience_years: float | None = None
     skills: List[str] = Field(default_factory=list)
     uploaded_at: str | None = None
+
+
+class CandidateUpdateRequest(StrictBaseModel):
+    full_name: str | None = None
+    employee_number: str | None = None
+    skills: List[str] | None = None
