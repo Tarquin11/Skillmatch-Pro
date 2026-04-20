@@ -30,6 +30,21 @@ def _load_records(labels_path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _resolve_cv_path(row: dict[str, Any], labels_path: Path) -> Path | None:
+    raw_path = row.get("path")
+    if raw_path:
+        return Path(str(raw_path)).expanduser()
+
+    raw_file = row.get("file")
+    if not raw_file:
+        return None
+
+    p = Path(str(raw_file)).expanduser()
+    if not p.is_absolute():
+        p = labels_path.parent / p
+    return p
+
+
 def _load_known_skills(profile_path: Path | None, records: list[dict[str, Any]]) -> list[str]:
     skills: list[str] = []
     if profile_path and profile_path.exists():
@@ -88,8 +103,7 @@ def main() -> None:
     error_counter: Counter[str] = Counter()
     per_cv: list[dict[str, Any]] = []
     for row in records:
-        raw_path = row.get("path")
-        path = Path(str(raw_path)).expanduser() if raw_path else None
+        path = _resolve_cv_path(row, labels_path)
         sample = {
             "path": str(path) if path else "",
             "crashed": False,

@@ -42,6 +42,25 @@ DEFAULT_GATE_POLICY: dict[str, Any] = {
         },
         "tracked": ["degraded_rate", "empty_text_rate"],
     },
+    "fairness": {
+        "enabled": False,
+        "report_path": "artifacts/cv_fairness_report.json",
+        "minimum_group_count": 2,
+        "max_abs_gaps": {
+            "schema_valid_rate_gap": 0.10,
+            "crash_rate_gap": 0.05,
+            "degraded_rate_gap": 0.20,
+            "empty_text_rate_gap": 0.10,
+            "ok_rate_gap": 0.10,
+        },
+        "tracked": [
+            "schema_valid_rate_gap",
+            "crash_rate_gap",
+            "degraded_rate_gap",
+            "empty_text_rate_gap",
+            "ok_rate_gap",
+        ],
+    },
 }
 
 def _safe_float(value: Any) -> float | None:
@@ -385,23 +404,143 @@ def _evaluate_robustness_gates(policy: dict[str, Any]) -> dict[str, Any]:
     return detail
 
 
+def _evaluate_fairness_gates(policy: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(policy.get("enabled", False))
+    report_path = Path(str(policy.get("report_path") or "")).expanduser()
+    max_abs_gaps = dict(policy.get("max_abs_gaps") or {})
+    tracked = [str(item).strip() for item in (policy.get("tracked") or []) if str(item).strip()]
+
+    min_group_count_raw = policy.get("minimum_group_count", 2)
+    try:
+        minimum_group_count = max(1, int(min_group_count_raw))
+    except (TypeError, ValueError):
+        minimum_group_count = 2
+
+    detail = {
+        "enabled": enabled,
+        "report_path": str(report_path),
+        "thresholds": {
+            "minimum_group_count": minimum_group_count,
+            "max_abs_gaps": max_abs_gaps,
+        },
+        "eligible_group_count": 0,
+        "results": {},
+        "tracked": {},
+        "passed": False,
+        "skipped": False,
+        "failures": [],
+    }
+
+    if not enabled:
+        detail["passed"] = True
+        detail["skipped"] = True
+        return detail
+
+    if not report_path.exists():
+        detail["failures"].append(f"fairness report_not_found path={report_path}")
+        return detail
+
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        detail["failures"].append(f"fairness report_unreadable path={report_path}")
+        return detail
+
+    if not isinstance(payload, dict):
+        detail["failures"].append(f"fairness report_invalid_json path={report_path}")
+        return detail
+
+    disparities = payload.get("disparities")
+    if not isinstance(disparities, dict):
+        detail["failures"].append("fairness report_missing_disparities_object")
+        return detail
+
+    totals = payload.get("totals")
+    eligible_group_count: int | None = None
+    if isinstance(totals, dict):
+        raw_count = totals.get("eligible_group_count")
+        try:
+            if raw_count is not None:
+                eligible_group_count = int(raw_count)
+        except (TypeError, ValueError):
+            eligible_group_count = None
+
+    if eligible_group_count is None:
+        groups = payload.get("groups")
+        config = payload.get("config")
+        min_group_size = config.get("min_group_size", 1) if isinstance(config, dict) else 1
+        try:
+            min_group_size_int = max(1, int(min_group_size))
+        except (TypeError, ValueError):
+            min_group_size_int = 1
+        if isinstance(groups, dict):
+            eligible_group_count = sum(
+                1
+                for group_data in groups.values()
+                if isinstance(group_data, dict)
+                and _safe_float(group_data.get("records")) is not None
+                and float(group_data.get("records")) >= float(min_group_size_int)
+            )
+        else:
+            eligible_group_count = 0
+
+    detail["eligible_group_count"] = int(eligible_group_count)
+    if int(eligible_group_count) < minimum_group_count:
+        detail["failures"].append(
+            "fairness insufficient_groups "
+            f"eligible_group_count={int(eligible_group_count)} < minimum_group_count={minimum_group_count}"
+        )
+
+    for metric_name, threshold_raw in max_abs_gaps.items():
+        threshold = _safe_float(threshold_raw)
+        value = _safe_float(disparities.get(metric_name))
+        passed = threshold is not None and value is not None and value <= threshold
+        detail["results"][metric_name] = {
+            "value": value,
+            "max_allowed_abs_gap": threshold,
+            "passed": passed,
+        }
+
+        if threshold is None:
+            detail["failures"].append(f"fairness invalid_threshold metric={metric_name}")
+            continue
+        if value is None:
+            detail["failures"].append(f"fairness missing_metric metric={metric_name}")
+            continue
+        if value > threshold:
+            detail["failures"].append(
+                f"fairness metric_gate_failed {metric_name}={value:.6f} > max_allowed={threshold:.6f}"
+            )
+
+    tracked_values: dict[str, float | None] = {}
+    for metric_name in tracked:
+        tracked_values[metric_name] = _safe_float(disparities.get(metric_name))
+    detail["tracked"] = tracked_values
+
+    detail["passed"] = len(detail["failures"]) == 0
+    return detail
+
+
 def build_promotion_gate_report(*, metrics: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     metric_gates = _evaluate_metric_gates(metrics, dict(policy.get("metrics") or {}))
     drift_gates = _evaluate_drift_gates(dict(policy.get("drift") or {}))
     generalization_gates = _evaluate_generalization_gates(dict(policy.get("generalization") or {}))
     robustness_gates = _evaluate_robustness_gates(dict(policy.get("robustness") or {}))
+    fairness_gates = _evaluate_fairness_gates(dict(policy.get("fairness") or {}))
 
     failures = []
     failures.extend(metric_gates.get("failures", []))
     failures.extend(drift_gates.get("failures", []))
     failures.extend(generalization_gates.get("failures", []))
     failures.extend(robustness_gates.get("failures", []))
+    failures.extend(fairness_gates.get("failures", []))
 
     passed = (
         bool(metric_gates.get("passed", False))
         and bool(drift_gates.get("passed", False))
         and bool(generalization_gates.get("passed", False))
         and bool(robustness_gates.get("passed", False))
+        and bool(fairness_gates.get("passed", False))
     )
 
     return {
@@ -412,4 +551,5 @@ def build_promotion_gate_report(*, metrics: dict[str, Any], policy: dict[str, An
         "drift_gates": drift_gates,
         "generalization_gates": generalization_gates,
         "robustness_gates": robustness_gates,
+        "fairness_gates": fairness_gates,
     }

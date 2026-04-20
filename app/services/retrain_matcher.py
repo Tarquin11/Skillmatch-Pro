@@ -209,9 +209,11 @@ def main():
     parser.add_argument("--drift-report", default=None, help="Override drift report path from gate config.")
     parser.add_argument("--generalization-report", default=None, help="Override generalization report path from gate config.")
     parser.add_argument("--robustness-report", default=None, help="Override robustness report path from gate config.")
+    parser.add_argument("--fairness-report", default=None, help="Override fairness report path from gate config.")
     parser.add_argument("--skip-drift-gates", action="store_true")
     parser.add_argument("--skip-generalization-gates", action="store_true")
     parser.add_argument("--skip-robustness-gates", action="store_true")
+    parser.add_argument("--skip-fairness-gates", action="store_true")
     parser.add_argument("--min-roc-auc", type=float, default=None)
     parser.add_argument("--min-f1", type=float, default=None)
     parser.add_argument("--min-map-at-k", type=float, default=None)
@@ -220,6 +222,12 @@ def main():
     parser.add_argument("--max-missing-job-skills-delta", type=float, default=None)
     parser.add_argument("--max-crash-rate", type=float, default=None)
     parser.add_argument("--min-schema-valid-rate", type=float, default=None)
+    parser.add_argument("--max-schema-valid-rate-gap", type=float, default=None)
+    parser.add_argument("--max-crash-rate-gap", type=float, default=None)
+    parser.add_argument("--max-degraded-rate-gap", type=float, default=None)
+    parser.add_argument("--max-empty-text-rate-gap", type=float, default=None)
+    parser.add_argument("--max-ok-rate-gap", type=float, default=None)
+    parser.add_argument("--min-fairness-groups", type=int, default=None)
     parser.add_argument("--fail-on-gate-fail", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--valid-size", type=float, default=0.2)
@@ -271,12 +279,16 @@ def main():
         gate_overrides.setdefault("generalization", {})["report_path"] = str(args.generalization_report)
     if args.robustness_report:
         gate_overrides.setdefault("robustness", {})["report_path"] = str(args.robustness_report)
+    if args.fairness_report:
+        gate_overrides.setdefault("fairness", {})["report_path"] = str(args.fairness_report)
     if args.skip_drift_gates:
         gate_overrides.setdefault("drift", {})["enabled"] = False
     if args.skip_generalization_gates:
         gate_overrides.setdefault("generalization", {})["enabled"] = False
     if args.skip_robustness_gates:
         gate_overrides.setdefault("robustness", {})["enabled"] = False
+    if args.skip_fairness_gates:
+        gate_overrides.setdefault("fairness", {})["enabled"] = False
     if args.min_roc_auc is not None:
         gate_overrides.setdefault("metrics", {}).setdefault("minimums", {})["roc_auc"] = float(args.min_roc_auc)
     if args.min_f1 is not None:
@@ -293,6 +305,18 @@ def main():
         gate_overrides.setdefault("robustness", {}).setdefault("maximums", {})["crash_rate"] = float(args.max_crash_rate)
     if args.min_schema_valid_rate is not None:
         gate_overrides.setdefault("robustness", {}).setdefault("minimums", {})["schema_valid_rate"] = float(args.min_schema_valid_rate)
+    if args.max_schema_valid_rate_gap is not None:
+        gate_overrides.setdefault("fairness", {}).setdefault("max_abs_gaps", {})["schema_valid_rate_gap"] = float(args.max_schema_valid_rate_gap)
+    if args.max_crash_rate_gap is not None:
+        gate_overrides.setdefault("fairness", {}).setdefault("max_abs_gaps", {})["crash_rate_gap"] = float(args.max_crash_rate_gap)
+    if args.max_degraded_rate_gap is not None:
+        gate_overrides.setdefault("fairness", {}).setdefault("max_abs_gaps", {})["degraded_rate_gap"] = float(args.max_degraded_rate_gap)
+    if args.max_empty_text_rate_gap is not None:
+        gate_overrides.setdefault("fairness", {}).setdefault("max_abs_gaps", {})["empty_text_rate_gap"] = float(args.max_empty_text_rate_gap)
+    if args.max_ok_rate_gap is not None:
+        gate_overrides.setdefault("fairness", {}).setdefault("max_abs_gaps", {})["ok_rate_gap"] = float(args.max_ok_rate_gap)
+    if args.min_fairness_groups is not None:
+        gate_overrides.setdefault("fairness", {})["minimum_group_count"] = int(args.min_fairness_groups)
 
     gate_policy = load_gate_policy(args.gates_config, overrides=gate_overrides)
     gate_report = build_promotion_gate_report(metrics=metrics, policy=gate_policy)

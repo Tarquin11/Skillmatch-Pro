@@ -1,0 +1,115 @@
+name: NLP AI Gates
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Fairness Robustness Promotion Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
+      - name: Generate robustness report
+        run: |
+          python -m app.scripts.evaluate_cv_robustness \
+            --labels-jsonl artifacts/synth_cvs_high/manifest.jsonl \
+            --max-records 5 \
+            --out artifacts/cv_robustness_report.json
+
+      - name: Generate fairness report
+        run: |
+          python -m app.scripts.evaluate_cv_fairness \
+            --labels-jsonl artifacts/synth_cvs_high/manifest.jsonl \
+            --labels-jsonl artifacts/synth_cvs_low/manifest.jsonl \
+            --group-field noise_level \
+            --min-group-size 1 \
+            --max-records 10 \
+            --out artifacts/cv_fairness_report.json
+
+      - name: Retrain matcher with promotion gates
+        run: |
+          python -m app.services.retrain_matcher \
+            --input artifacts/smoke_pairs.json \
+            --version ci_${{ github.run_id }} \
+            --promote-latest \
+            --fail-on-gate-fail \
+            --no-semantic \
+            --k 5 \
+            --valid-size 0.2 \
+            --skip-drift-gates \
+            --skip-generalization-gates \
+            --robustness-report artifacts/cv_robustness_report.json \
+            --fairness-report artifacts/cv_fairness_report.json
+
+      - name: Run scheduled holdout gate
+        run: |
+          python -m app.scripts.run_scheduled_holdout_eval \
+            --model artifacts/matcher.joblib \
+            --scenario iid_val=data/splits/val.jsonl \
+            --scenario candidate_disjoint_val=data/splits_by_candidate/val.jsonl \
+            --scenario job_disjoint_val=data/splits_by_job/val.jsonl \
+            --policy app/config/promotion_policy.json \
+            --max-holdout-age-hours 1000 \
+            --out-dir artifacts/evaluations \
+            --latest-out artifacts/generalization_report.json \
+            --k 5 \
+            --no-semantic
+
+      - name: Run fairness and robustness tests
+        run: |
+          pytest \
+            app/tests/ai/test_cv_parser_robustness.py \
+            app/tests/ai/test_cv_parser_fuzz.py \
+            app/tests/ai/test_evaluate_cv_robustness.py \
+            app/tests/ai/test_evaluate_cv_fairness.py \
+            app/tests/ai/test_promotion_gates_robustness.py \
+            app/tests/ai/test_promotion_gates_fairness.py \
+            -q
+
+      - name: Release readiness check
+        run: |
+          python -m app.scripts.check_release_ready \
+            --skip-tests \
+            --policy app/config/promotion_policy.json \
+            --metrics-glob artifacts/matcher_metrics_ci_${{ github.run_id }}.json \
+            --scheduled-gate-glob artifacts/evaluations/generalization_gate_*.json \
+            --max-scheduled-gate-age-hours 2 \
+            --out artifacts/release_readiness_ci.json
+
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nlp-ai-gates-${{ github.run_id }}
+          path: |
+            artifacts/cv_robustness_report.json
+            artifacts/cv_fairness_report.json
+            artifacts/matcher_metrics_ci_${{ github.run_id }}.json
+            artifacts/release_readiness_ci.json
+            artifacts/evaluations/generalization_report_*.json
+            artifacts/evaluations/generalization_gate_*.json

@@ -55,5 +55,24 @@
       "degraded_rate",
       "empty_text_rate"
     ]
+  },
+  "fairness": {
+    "enabled": true,
+    "report_path": "artifacts/cv_fairness_report.json",
+    "minimum_group_count": 2,
+    "max_abs_gaps": {
+      "schema_valid_rate_gap": 0.1,
+      "crash_rate_gap": 0.05,
+      "degraded_rate_gap": 0.2,
+      "empty_text_rate_gap": 0.1,
+      "ok_rate_gap": 0.1
+    },
+    "tracked": [
+      "schema_valid_rate_gap",
+      "crash_rate_gap",
+      "degraded_rate_gap",
+      "empty_text_rate_gap",
+      "ok_rate_gap"
+    ]
   }
 }

@@ -130,6 +130,7 @@ def main() -> None:
             "drift": {"enabled": False},
             "generalization": {"report_path": str(latest_report)},
             "robustness": {"enabled": False},
+            "fairness": {"enabled": False},
         },
     )
     gate = build_promotion_gate_report(metrics={}, policy=policy)

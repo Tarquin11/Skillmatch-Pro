@@ -93,3 +93,36 @@ def test_evaluate_cv_robustness_generates_expected_kpis(monkeypatch):
     assert report["totals"]["schema_valid"] == 1
     assert report["kpis"]["crash_rate"] == 0.5
     assert report["kpis"]["schema_valid_rate"] == 0.5
+
+
+def test_evaluate_cv_robustness_supports_manifest_file_field(monkeypatch):
+    root = _local_tmp_dir()
+    cv_a = root / "sample_a.pdf"
+    cv_a.write_bytes(b"fake")
+
+    labels = root / "labels_manifest.jsonl"
+    labels.write_text(
+        json.dumps({"file": cv_a.name, "labels": {"skills": ["python"]}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(evaluate_cv_robustness, "parse_cv_safe", lambda **_kwargs: _valid_payload())
+
+    out = root / "cv_robustness_report.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_cv_robustness",
+            "--labels-jsonl",
+            str(labels),
+            "--out",
+            str(out),
+        ],
+    )
+    evaluate_cv_robustness.main()
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["totals"]["records"] == 1
+    assert report["totals"]["crashes"] == 0
+    assert report["kpis"]["schema_valid_rate"] == 1.0

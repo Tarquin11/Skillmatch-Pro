@@ -1,21 +1,21 @@
 {
   "train_size": 180000,
   "valid_size": 45000,
-  "roc_auc": 0.9560736144444446,
-  "average_precision": 0.8544009705683813,
-  "precision": 0.823636564362994,
-  "recall": 0.9947333333333334,
-  "f1": 0.9011354028264283,
-  "precision_at_k": 0.5880070370158476,
-  "recall_at_k": 0.9871074060100892,
-  "map_at_k": 0.8868737443990486,
-  "ndcg_at_k": 0.935710968499844,
-  "model_version": "20260407_234549",
-  "trained_at_utc": "2026-04-07T23:45:49.595800+00:00",
-  "input_path": "data\\features\\pairs.jsonl",
-  "artifact_path": "artifacts\\matcher_20260407_234549.joblib",
+  "roc_auc": 0.9558492788888889,
+  "average_precision": 0.8532326601793627,
+  "precision": 0.8230904302019315,
+  "recall": 1.0,
+  "f1": 0.9029617144233084,
+  "precision_at_k": 0.5880470850735168,
+  "recall_at_k": 0.9871302383817402,
+  "map_at_k": 0.8861592365739367,
+  "ndcg_at_k": 0.9360122406967277,
+  "model_version": "20260420_final_gate",
+  "trained_at_utc": "2026-04-20T10:52:12.551619+00:00",
+  "input_path": "data\\train_pairs.jsonl",
+  "artifact_path": "artifacts\\matcher_20260420_final_gate.joblib",
   "dataset_version": "didnt put yet ! ",
-  "dataset_sha256": "7786777c9dc4c4cfee76f277a33b7abbe989a93f919c64765962d572df6f933e",
+  "dataset_sha256": "ed6224297cccd2ce1ed432a516c07e240539c388ba0d43300d32c6f154dde355",
   "promotion_gate_policy": {
     "metrics": {
       "enabled": true,
@@ -73,10 +73,29 @@
         "degraded_rate",
         "empty_text_rate"
       ]
+    },
+    "fairness": {
+      "enabled": true,
+      "report_path": "artifacts/cv_fairness_report.json",
+      "minimum_group_count": 2,
+      "max_abs_gaps": {
+        "schema_valid_rate_gap": 0.1,
+        "crash_rate_gap": 0.05,
+        "degraded_rate_gap": 0.2,
+        "empty_text_rate_gap": 0.1,
+        "ok_rate_gap": 0.1
+      },
+      "tracked": [
+        "schema_valid_rate_gap",
+        "crash_rate_gap",
+        "degraded_rate_gap",
+        "empty_text_rate_gap",
+        "ok_rate_gap"
+      ]
     }
   },
   "promotion_gate": {
-    "checked_at_utc": "2026-04-07T23:48:06.647543+00:00",
+    "checked_at_utc": "2026-04-20T10:52:56.803535+00:00",
     "passed": true,
     "failures": [],
     "metric_gates": {
@@ -90,17 +109,17 @@
       },
       "results": {
         "roc_auc": {
-          "value": 0.9560736144444446,
+          "value": 0.9558492788888889,
           "min_required": 0.9,
           "passed": true
         },
         "f1": {
-          "value": 0.9011354028264283,
+          "value": 0.9029617144233084,
           "min_required": 0.85,
           "passed": true
         },
         "map_at_k": {
-          "value": 0.8868737443990486,
+          "value": 0.8861592365739367,
           "min_required": 0.85,
           "passed": true
         }
@@ -165,17 +184,17 @@
           "passed": true,
           "results": {
             "roc_auc": {
-              "value": 0.9587074870998338,
+              "value": 0.9586853360134353,
               "min_required": 0.9,
               "passed": true
             },
             "f1": {
-              "value": 0.8571845581259578,
+              "value": 0.8584747614538568,
               "min_required": 0.85,
               "passed": true
             },
             "map_at_k": {
-              "value": 0.7894855316757972,
+              "value": 0.7896605913751933,
               "min_required": 0.78,
               "passed": true
             }
@@ -186,17 +205,17 @@
           "passed": true,
           "results": {
             "roc_auc": {
-              "value": 0.9558789563696429,
+              "value": 0.9559654231663929,
               "min_required": 0.84,
               "passed": true
             },
             "f1": {
-              "value": 0.8581706748384518,
+              "value": 0.8594227955845192,
               "min_required": 0.78,
               "passed": true
             },
             "map_at_k": {
-              "value": 0.9192432489984248,
+              "value": 0.9193680511564245,
               "min_required": 0.78,
               "passed": true
             }
@@ -207,17 +226,17 @@
           "passed": true,
           "results": {
             "roc_auc": {
-              "value": 0.9587074870998338,
+              "value": 0.9586853360134353,
               "min_required": 0.84,
               "passed": true
             },
             "f1": {
-              "value": 0.8571845581259578,
+              "value": 0.8584747614538568,
               "min_required": 0.78,
               "passed": true
             },
             "map_at_k": {
-              "value": 0.7894855316757972,
+              "value": 0.7896605913751933,
               "min_required": 0.78,
               "passed": true
             }
@@ -260,7 +279,7 @@
         },
         "advisory_maximums": {
           "degraded_rate": {
-            "value": 0.0125,
+            "value": 0.0,
             "advisory_max_allowed": 0.3,
             "exceeded": false
           },
@@ -272,10 +291,62 @@
         }
       },
       "tracked": {
-        "degraded_rate": 0.0125,
+        "degraded_rate": 0.0,
         "empty_text_rate": 0.0
       },
       "advisories": [],
+      "passed": true,
+      "skipped": false,
+      "failures": []
+    },
+    "fairness_gates": {
+      "enabled": true,
+      "report_path": "artifacts\\cv_fairness_report.json",
+      "thresholds": {
+        "minimum_group_count": 2,
+        "max_abs_gaps": {
+          "schema_valid_rate_gap": 0.1,
+          "crash_rate_gap": 0.05,
+          "degraded_rate_gap": 0.2,
+          "empty_text_rate_gap": 0.1,
+          "ok_rate_gap": 0.1
+        }
+      },
+      "eligible_group_count": 8,
+      "results": {
+        "schema_valid_rate_gap": {
+          "value": 0.0,
+          "max_allowed_abs_gap": 0.1,
+          "passed": true
+        },
+        "crash_rate_gap": {
+          "value": 0.0,
+          "max_allowed_abs_gap": 0.05,
+          "passed": true
+        },
+        "degraded_rate_gap": {
+          "value": 0.0,
+          "max_allowed_abs_gap": 0.2,
+          "passed": true
+        },
+        "empty_text_rate_gap": {
+          "value": 0.0,
+          "max_allowed_abs_gap": 0.1,
+          "passed": true
+        },
+        "ok_rate_gap": {
+          "value": 0.0,
+          "max_allowed_abs_gap": 0.1,
+          "passed": true
+        }
+      },
+      "tracked": {
+        "schema_valid_rate_gap": 0.0,
+        "crash_rate_gap": 0.0,
+        "degraded_rate_gap": 0.0,
+        "empty_text_rate_gap": 0.0,
+        "ok_rate_gap": 0.0
+      },
       "passed": true,
       "skipped": false,
       "failures": []
