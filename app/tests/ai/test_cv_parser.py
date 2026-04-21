@@ -42,6 +42,65 @@ def test_detect_title_extracts_role_prefix():
     assert detect_title(text) == "Data Analyst"
 
 
+def test_parse_cv_safe_extracts_contact_details(monkeypatch):
+    text = (
+        "Mohamed Aziz Akrout\n"
+        "Junior Penetration Tester specializing in Active Directory and Web Application Security\n"
+        "Tunis, Tunisia • +216 54 142 316 • mohamedazizakrout@gmail.com • LinkedIn • GitHub\n"
+        "Education\n"
+        "Esprit School of Engineering\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["python"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    assert payload["extracted_full_name"] == "Mohamed Aziz Akrout"
+    assert payload["extracted_email"] == "mohamedazizakrout@gmail.com"
+    assert payload["extracted_phone"] == "+216 54 142 316"
+
+
+def test_parse_cv_safe_extracts_name_from_contact_line_with_separator(monkeypatch):
+    text = (
+        "MOHAMED AZIZ AKROUT | Junior Penetration Tester\n"
+        "Tunis, Tunisia • +216 54 142 316 • mohamedazizakrout@gmail.com\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=[],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    assert payload["extracted_full_name"] == "MOHAMED AZIZ AKROUT"
+    assert payload["extracted_email"] == "mohamedazizakrout@gmail.com"
+    assert payload["extracted_phone"] == "+216 54 142 316"
+
+
+def test_parse_cv_safe_inferrs_name_from_email_when_header_is_noisy(monkeypatch):
+    text = (
+        "Curriculum Vitae\n"
+        "Junior QA profile\n"
+        "Contact: anissa.ben-salem@example.com\n"
+        "Phone: +216 22 000 111\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=[],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    assert payload["extracted_full_name"] == "Anissa Ben Salem"
+    assert payload["extracted_email"] == "anissa.ben-salem@example.com"
+    assert payload["extracted_phone"] == "+216 22 000 111"
+
+
 def test_detect_experience_years_from_explicit_pattern():
     text = "Backend Engineer with 4+ years experience in Python and APIs."
     assert detect_experience_years(text) == 4.0

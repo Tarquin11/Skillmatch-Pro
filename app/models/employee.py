@@ -15,6 +15,7 @@ class Employee(AuditMixin, Base):
 
     # Demographiques
     email = Column(String, unique=True, index=True, nullable=False)
+    phone = Column(String, nullable=True)
     gender = Column(String, nullable=True)
     dob = Column(Date, nullable=True)
     marital_status = Column(String, nullable=True)

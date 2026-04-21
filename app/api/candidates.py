@@ -38,6 +38,10 @@ _ALLOWED_MIMES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 _FILENAME_NOISE_TOKENS = {"cv", "resume", "candidate", "profile", "final", "v", "version"}
+_PARSED_EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+_PREVIEW_EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}\b")
+_PREVIEW_PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().\-]{6,}\d)(?!\w)")
+_DISPLAY_NAME_TOKEN_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'`-]{0,29}$")
 _CANDIDATE_SORT_FIELDS = {
     "id": Employee.id,
     "name": Employee.full_name,
@@ -120,6 +124,7 @@ def _candidate_item_from_employee(employee: Employee) -> CandidateListItem:
         employee_number=str(employee.employee_number or "").strip(),
         full_name=str(employee.full_name or "").strip() or "Candidate Upload",
         email=str(employee.email or "").strip(),
+        phone=(str(employee.phone or "").strip() or None),
         predicted_title=(str(employee.position or "").strip() or None),
         predicted_experience_years=_experience_years_from_hire_date(getattr(employee, "hire_date", None)),
         skills=skills,
@@ -155,6 +160,103 @@ def _normalize_skill_names(raw_skills: list[str]) -> list[str]:
     return cleaned
 
 
+def _generated_candidate_email() -> str:
+    return f"cv_{uuid.uuid4().hex[:12]}@candidate.local"
+
+
+def _candidate_email_alias(parsed_email: str) -> str:
+    local, _, domain = str(parsed_email or "").partition("@")
+    suffix = uuid.uuid4().hex[:6]
+    aliased_local = f"{local}+cv{suffix}" if local else f"cv_{suffix}"
+    if len(aliased_local) > 64:
+        aliased_local = aliased_local[:64]
+    return f"{aliased_local}@{domain or 'candidate.local'}"
+
+
+def _normalize_parsed_email(value: object | None) -> str | None:
+    email = str(value or "").strip().lower()
+    if not email:
+        return None
+    if not _PARSED_EMAIL_RE.fullmatch(email):
+        return None
+    return email
+
+
+def _extract_email_from_preview(parsed: dict) -> str | None:
+    preview = str(parsed.get("preview") or "")
+    match = _PREVIEW_EMAIL_RE.search(preview)
+    if not match:
+        return None
+    return _normalize_parsed_email(match.group(0))
+
+
+def _resolve_candidate_email(db: Session, parsed: dict) -> str:
+    parsed_email = _normalize_parsed_email(parsed.get("extracted_email")) or _extract_email_from_preview(parsed)
+    if parsed_email:
+        duplicate = db.query(Employee.id).filter(func.lower(Employee.email) == parsed_email).first()
+        if duplicate is None:
+            return parsed_email
+        aliased = _candidate_email_alias(parsed_email)
+        duplicate_alias = db.query(Employee.id).filter(func.lower(Employee.email) == aliased.lower()).first()
+        if duplicate_alias is None:
+            return aliased
+    return _generated_candidate_email()
+
+
+def _normalize_parsed_phone(value: object | None) -> str | None:
+    phone = re.sub(r"\s+", " ", str(value or "")).strip()
+    return phone or None
+
+
+def _extract_phone_from_preview(parsed: dict) -> str | None:
+    preview = str(parsed.get("preview") or "")
+    for match in _PREVIEW_PHONE_RE.finditer(preview):
+        phone = _normalize_parsed_phone(match.group(0))
+        if not phone:
+            continue
+        digits = re.sub(r"\D", "", phone)
+        if 8 <= len(digits) <= 15 and len(set(digits)) > 1:
+            return phone
+    return None
+
+
+def _resolve_candidate_phone(parsed: dict) -> str | None:
+    explicit = _normalize_parsed_phone(parsed.get("extracted_phone"))
+    if explicit:
+        return explicit
+    return _extract_phone_from_preview(parsed)
+
+
+def _extract_display_name_from_preview(parsed: dict) -> str | None:
+    preview = str(parsed.get("preview") or "")
+    lines = [re.sub(r"\s+", " ", line).strip() for line in preview.splitlines() if line and line.strip()]
+    for line in lines[:8]:
+        head = re.split(r"\s*•\s*|\s+\|\s+", line, maxsplit=1)[0].strip(" -,:;|")
+        if not head:
+            continue
+        if "@" in head or re.search(r"\d", head):
+            continue
+        tokens = [tok.strip(".,;:()[]{}") for tok in head.split() if tok.strip(".,;:()[]{}")]
+        if not 2 <= len(tokens) <= 5:
+            continue
+        if any(not _DISPLAY_NAME_TOKEN_RE.fullmatch(tok) for tok in tokens):
+            continue
+        capitalized = sum(1 for token in tokens if token[:1].isupper() or token.isupper())
+        if capitalized >= max(2, len(tokens) - 1):
+            return " ".join(tokens)
+    return None
+
+
+def _resolve_candidate_display_name(parsed: dict, filename: str) -> str:
+    explicit = str(parsed.get("extracted_full_name") or "").strip()
+    if explicit:
+        return explicit
+    fallback = _extract_display_name_from_preview(parsed)
+    if fallback:
+        return fallback
+    return _display_name_from_filename(filename)
+
+
 def _persist_candidate_profile(
     *,
     db: Session,
@@ -162,7 +264,7 @@ def _persist_candidate_profile(
     parsed: dict,
     created_by: int | None,
 ) -> Employee:
-    display_name = _display_name_from_filename(filename)
+    display_name = _resolve_candidate_display_name(parsed, filename)
     first_name, last_name = _split_first_last_name(display_name)
     predicted_title = str(parsed.get("predicted_title") or "").strip() or "Candidate"
 
@@ -171,7 +273,8 @@ def _persist_candidate_profile(
         first_name=first_name,
         last_name=last_name,
         full_name=display_name,
-        email=f"cv_{uuid.uuid4().hex[:12]}@candidate.local",
+        email=_resolve_candidate_email(db, parsed),
+        phone=_resolve_candidate_phone(parsed),
         department="candidate pool",
         position=predicted_title,
         employment_status="candidate",
@@ -218,6 +321,7 @@ def list_candidates(
                 or_(
                     func.lower(func.trim(Employee.full_name)).like(f"%{term}%"),
                     func.lower(func.trim(Employee.email)).like(f"%{term}%"),
+                    func.lower(func.trim(func.coalesce(Employee.phone, ""))).like(f"%{term}%"),
                     func.lower(func.trim(Employee.position)).like(f"%{term}%"),
                     func.lower(func.trim(Employee.employee_number)).like(f"%{term}%"),
                 )
@@ -420,6 +524,9 @@ async def upload_cv(
             extraction_channels=parsed["extraction_channels"],
             extracted_skills=parsed["extracted_skills"],
             preview=parsed["preview"],
+            extracted_full_name=parsed["extracted_full_name"],
+            extracted_email=parsed["extracted_email"],
+            extracted_phone=parsed["extracted_phone"],
             predicted_title=parsed["predicted_title"],
             predicted_experience_years=parsed["predicted_experience_years"],
         )

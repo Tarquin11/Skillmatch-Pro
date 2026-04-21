@@ -51,6 +51,9 @@ class CandidateUploadRespose(StrictBaseModel):
     extraction_channels: CandidateExtractionChannels = Field(default_factory=CandidateExtractionChannels)
     preview: str = ""
     extracted_skills: List[CandidateSkillExtraction] = Field(default_factory=list)
+    extracted_full_name: str | None = None
+    extracted_email: str | None = None
+    extracted_phone: str | None = None
     predicted_title: str | None = None
     predicted_experience_years: float | None = None
 
@@ -60,6 +63,7 @@ class CandidateListItem(StrictBaseModel):
     employee_number: str
     full_name: str
     email: str
+    phone: str | None = None
     predicted_title: str | None = None
     predicted_experience_years: float | None = None
     skills: List[str] = Field(default_factory=list)

@@ -3,8 +3,8 @@ import uuid
 from app.api import candidates as candidates_api
 
 
-def _fake_parsed_payload() -> dict:
-    return {
+def _fake_parsed_payload(**overrides) -> dict:
+    payload = {
         "ok": True,
         "degraded": False,
         "errors": [],
@@ -37,18 +37,31 @@ def _fake_parsed_payload() -> dict:
             {"skill": "docker", "confidence": 0.97, "confidence_normalized": 0.98, "source": "exact", "evidence": []},
         ],
         "preview": "Backend engineer profile",
+        "extracted_full_name": "Sara Ben Ali",
+        "extracted_email": "sara.ben.ali@example.com",
+        "extracted_phone": "+216 54 111 222",
         "predicted_title": "Backend Engineer",
         "predicted_experience_years": 3.0,
     }
+    payload.update(overrides)
+    return payload
 
 
 def test_upload_cv_autosaves_profile_and_lists_in_candidates(client, admin_auth, monkeypatch):
-    monkeypatch.setattr(candidates_api, "parse_cv_safe", lambda **_: _fake_parsed_payload(), raising=False)
-
     before = client.get("/candidates/", headers=admin_auth, params={"limit": 100}).json()
     before_count = len(before)
 
     marker = uuid.uuid4().hex[:8]
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(
+            extracted_full_name="Sara Ben Ali",
+            extracted_email=f"sara.ben.ali.{marker}@example.com",
+            extracted_phone="+216 54 111 222",
+        ),
+        raising=False,
+    )
     filename = f"sara_ben_ali_{marker}_resume.pdf"
     files = {"file": (filename, b"%PDF-1.7\n%fake cv content", "application/pdf")}
 
@@ -64,6 +77,9 @@ def test_upload_cv_autosaves_profile_and_lists_in_candidates(client, admin_auth,
     assert len(rows) >= before_count + 1
 
     first = rows[0]
+    assert first["full_name"] == "Sara Ben Ali"
+    assert first["email"] == f"sara.ben.ali.{marker}@example.com"
+    assert first["phone"] == "+216 54 111 222"
     assert first["predicted_title"] == "Backend Engineer"
     assert set(first["skills"]) >= {"python", "sql", "docker"}
 
@@ -74,9 +90,13 @@ def test_upload_cv_autosaves_profile_and_lists_in_candidates(client, admin_auth,
 
 
 def test_update_candidate_name_id_and_skills(client, admin_auth, monkeypatch):
-    monkeypatch.setattr(candidates_api, "parse_cv_safe", lambda **_: _fake_parsed_payload(), raising=False)
-
     marker = uuid.uuid4().hex[:8]
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(extracted_email=f"joanne.cain.{marker}@example.com"),
+        raising=False,
+    )
     filename = f"joanne_cain_{marker}_resume.pdf"
     files = {"file": (filename, b"%PDF-1.7\n%fake cv content", "application/pdf")}
     upload = client.post("/candidates/upload_cv", headers=admin_auth, files=files)
@@ -105,10 +125,14 @@ def test_update_candidate_name_id_and_skills(client, admin_auth, monkeypatch):
 
 
 def test_update_candidate_rejects_duplicate_employee_number(client, admin_auth, monkeypatch):
-    monkeypatch.setattr(candidates_api, "parse_cv_safe", lambda **_: _fake_parsed_payload(), raising=False)
-
     files_a = {"file": ("alpha_resume.pdf", b"%PDF-1.7\n%fake cv content", "application/pdf")}
     files_b = {"file": ("beta_resume.pdf", b"%PDF-1.7\n%fake cv content", "application/pdf")}
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(extracted_email=f"{uuid.uuid4().hex[:8]}@example.com"),
+        raising=False,
+    )
     upload_a = client.post("/candidates/upload_cv", headers=admin_auth, files=files_a)
     upload_b = client.post("/candidates/upload_cv", headers=admin_auth, files=files_b)
     assert upload_a.status_code == 200, upload_a.text
@@ -131,10 +155,76 @@ def test_update_candidate_rejects_duplicate_employee_number(client, admin_auth, 
     assert body["detail"]["code"] == "employee_number_already_exists"
 
 
-def test_delete_candidate_removes_profile(client, admin_auth, monkeypatch):
-    monkeypatch.setattr(candidates_api, "parse_cv_safe", lambda **_: _fake_parsed_payload(), raising=False)
-
+def test_upload_cv_falls_back_to_preview_contact_details(client, admin_auth, monkeypatch):
     marker = uuid.uuid4().hex[:8]
+    preview = (
+        "Anissa Ben Salem\n"
+        f"Tunis, Tunisia • +216 22 000 111 • anissa.ben.salem.{marker}@example.com\n"
+        "Education\n"
+    )
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(
+            extracted_full_name=None,
+            extracted_email=None,
+            extracted_phone=None,
+            preview=preview,
+        ),
+        raising=False,
+    )
+    files = {"file": (f"anissa_{marker}.pdf", b"%PDF-1.7\n%fake cv content", "application/pdf")}
+    upload = client.post("/candidates/upload_cv", headers=admin_auth, files=files)
+    assert upload.status_code == 200, upload.text
+
+    listed = client.get("/candidates/", headers=admin_auth, params={"search": marker, "limit": 20})
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()
+    assert rows, "Expected candidate row from preview fallback"
+    first = rows[0]
+    assert first["full_name"] == "Anissa Ben Salem"
+    assert first["email"] == f"anissa.ben.salem.{marker}@example.com"
+    assert first["phone"] == "+216 22 000 111"
+
+
+def test_upload_cv_aliases_duplicate_extracted_email(client, admin_auth, monkeypatch):
+    marker = uuid.uuid4().hex[:8]
+    duplicate_email = f"duplicate.{marker}@example.com"
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(extracted_email=duplicate_email),
+        raising=False,
+    )
+
+    first_upload = client.post(
+        "/candidates/upload_cv",
+        headers=admin_auth,
+        files={"file": (f"dup_a_{marker}.pdf", b"%PDF-1.7\n%fake cv content", "application/pdf")},
+    )
+    second_upload = client.post(
+        "/candidates/upload_cv",
+        headers=admin_auth,
+        files={"file": (f"dup_b_{marker}.pdf", b"%PDF-1.7\n%fake cv content", "application/pdf")},
+    )
+    assert first_upload.status_code == 200, first_upload.text
+    assert second_upload.status_code == 200, second_upload.text
+
+    listed = client.get("/candidates/", headers=admin_auth, params={"search": marker, "limit": 20})
+    assert listed.status_code == 200, listed.text
+    emails = [str(row.get("email", "")).lower() for row in listed.json()]
+    assert any(email == duplicate_email for email in emails)
+    assert any(email.startswith(f"duplicate.{marker}+cv") for email in emails)
+
+
+def test_delete_candidate_removes_profile(client, admin_auth, monkeypatch):
+    marker = uuid.uuid4().hex[:8]
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(extracted_email=f"delete.me.{marker}@example.com"),
+        raising=False,
+    )
     filename = f"delete_me_{marker}_resume.pdf"
     files = {"file": (filename, b"%PDF-1.7\n%fake cv content", "application/pdf")}
     upload = client.post("/candidates/upload_cv", headers=admin_auth, files=files)

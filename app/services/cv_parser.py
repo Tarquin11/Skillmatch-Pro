@@ -193,6 +193,41 @@ _TITLE_KEYWORDS = (
     "coordinateur",
     "coordonnateur",
 )
+_EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}\b")
+_PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().\-]{6,}\d)(?!\w)")
+_NAME_TOKEN_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'`-]{0,29}$")
+_CONTACT_URL_HINTS = ("http://", "https://", "www.", "linkedin", "github")
+_CONTACT_LABEL_HINTS = ("phone", "telephone", "tel", "mobile", "gsm", "email", "mail")
+_NAME_STOPWORDS = frozenset(
+    {
+        "curriculum",
+        "vitae",
+        "resume",
+        "cv",
+        "candidate",
+        "profile",
+        "linkedin",
+        "github",
+        "tunisia",
+        "tunisie",
+        "tunis",
+        "france",
+        "paris",
+        "junior",
+        "senior",
+        "lead",
+        "principal",
+        "security",
+        "penetration",
+        "tester",
+        "engineer",
+        "developer",
+        "analyst",
+        "manager",
+        "student",
+        "intern",
+    }
+)
 _SINGLE_WORD_RESUME_HEADINGS = frozenset(
     {
         "skills",
@@ -2584,6 +2619,133 @@ def _collect_skill_evidence(skill: str, text: str, max_items: int = 2) -> list[s
     return evidence
 
 
+def _header_lines(text: str, limit: int = 24) -> list[str]:
+    lines = [
+        re.sub(r"\s+", " ", ln[:MAX_LINE_CHARS]).strip()
+        for ln in (text or "").splitlines()[:MAX_LINES]
+        if ln and ln.strip()
+    ]
+    return lines[:limit]
+
+
+def _normalize_name_line(raw_line: str) -> str:
+    line = re.sub(r"\s+", " ", str(raw_line or "")).strip()
+    if not line:
+        return ""
+    # Contact separators often appear on the same line as the candidate name.
+    line = re.split(r"\s*•\s*|\s+\|\s+", line, maxsplit=1)[0]
+    return line.strip(" -,:;|")
+
+
+def _derive_name_from_email(email: str | None) -> str | None:
+    if not email or "@" not in email:
+        return None
+    local_part = str(email).split("@", 1)[0].strip()
+    if not local_part:
+        return None
+    if re.search(r"[^a-zA-Z._-]", local_part):
+        return None
+    tokens = [tok for tok in re.split(r"[._-]+", local_part) if tok]
+    if not 2 <= len(tokens) <= 4:
+        return None
+    candidate = " ".join(tok.capitalize() for tok in tokens)
+    return candidate if _looks_like_person_name(candidate) else None
+
+
+def _looks_like_person_name(line: str) -> bool:
+    line = _normalize_name_line(line)
+    if not line or len(line) < 5 or len(line) > 80:
+        return False
+    lowered = _normalize_text(line).replace("\n", " ").strip()
+    if not lowered:
+        return False
+    if any(hint in lowered for hint in _CONTACT_URL_HINTS):
+        return False
+    if _EMAIL_RE.search(line) or _PHONE_RE.search(line) or re.search(r"\d", line):
+        return False
+    is_heading, _key, _weight = _heading_candidate(line)
+    if is_heading:
+        return False
+
+    tokens = [tok.strip(".,;:()[]{}") for tok in line.split() if tok.strip(".,;:()[]{}")]
+    if not 2 <= len(tokens) <= 5:
+        return False
+    if any(not _NAME_TOKEN_RE.fullmatch(tok) for tok in tokens):
+        return False
+
+    lowered_tokens = [tok.lower() for tok in tokens]
+    if any(tok in _NAME_STOPWORDS for tok in lowered_tokens):
+        return False
+    if any(keyword in lowered for keyword in _TITLE_KEYWORDS):
+        return False
+
+    capitalized = sum(1 for tok in tokens if tok[:1].isupper() or tok.isupper())
+    return capitalized >= max(2, len(tokens) - 1)
+
+
+def extract_full_name(text: str, email_hint: str | None = None) -> str | None:
+    for line in _header_lines(text, limit=12):
+        normalized = _normalize_name_line(line)
+        if _looks_like_person_name(normalized):
+            return normalized
+    inferred_from_email = _derive_name_from_email(email_hint)
+    if inferred_from_email:
+        return inferred_from_email
+    return None
+
+
+def extract_email(text: str) -> str | None:
+    match = _EMAIL_RE.search(text or "")
+    if not match:
+        return None
+    return match.group(0).strip().lower() or None
+
+
+def _clean_phone_candidate(value: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;|.")
+    digits = re.sub(r"\D", "", cleaned)
+    if len(digits) < 8 or len(digits) > 15:
+        return None
+    if len(set(digits)) <= 1:
+        return None
+    if "/" in cleaned and len(digits) == 8:
+        return None
+    return cleaned or None
+
+
+def extract_phone(text: str) -> str | None:
+    candidates: list[tuple[int, int, str]] = []
+    for index, line in enumerate(_header_lines(text, limit=20)):
+        line_lower = line.lower()
+        for match in _PHONE_RE.finditer(line):
+            cleaned = _clean_phone_candidate(match.group(0))
+            if not cleaned:
+                continue
+            score = 0
+            if cleaned.startswith("+"):
+                score += 3
+            if any(hint in line_lower for hint in _CONTACT_LABEL_HINTS):
+                score += 3
+            if _EMAIL_RE.search(line):
+                score += 2
+            if index <= 4:
+                score += 1
+            candidates.append((score, -index, cleaned))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][2]
+
+
+def extract_contact_details(text: str) -> dict[str, str | None]:
+    email = extract_email(text)
+    return {
+        "full_name": extract_full_name(text, email_hint=email),
+        "email": email,
+        "phone": extract_phone(text),
+    }
+
+
 def detect_title(text: str) -> str | None:
     lines = [
         re.sub(r"\s+", " ", ln[:MAX_LINE_CHARS]).strip()
@@ -2782,6 +2944,9 @@ def parse_cv_safe(
         },
         "preview": "",
         "extracted_skills": [],
+        "extracted_full_name": None,
+        "extracted_email": None,
+        "extracted_phone": None,
         "predicted_title": None,
         "predicted_experience_years": None,
     }
@@ -2834,6 +2999,15 @@ def parse_cv_safe(
         result["degraded"] = True
         result["warnings"].append("empty_text")
         return result
+
+    try:
+        contact_details = extract_contact_details(text)
+        result["extracted_full_name"] = contact_details.get("full_name")
+        result["extracted_email"] = contact_details.get("email")
+        result["extracted_phone"] = contact_details.get("phone")
+    except Exception as exc:
+        result["degraded"] = True
+        result["errors"].append(_stage_error("extract_contact_details", exc))
 
     section_map, _section_weights_header = _extract_sections(text)
 
