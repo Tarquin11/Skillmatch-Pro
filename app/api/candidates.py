@@ -41,6 +41,10 @@ _FILENAME_NOISE_TOKENS = {"cv", "resume", "candidate", "profile", "final", "v", 
 _PARSED_EMAIL_RE = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _PREVIEW_EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}\b")
 _PREVIEW_PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().\-]{6,}\d)(?!\w)")
+_OBFUSCATED_AT_RE = re.compile(
+    r"(?i)(?<=[A-Z0-9._%+\-])\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\bat\b)\s*(?=[A-Z0-9.\-])"
+)
+_OBFUSCATED_DOT_RE = re.compile(r"(?i)(?<=[A-Z0-9])\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*(?=[A-Z0-9])")
 _DISPLAY_NAME_TOKEN_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'`-]{0,29}$")
 _CANDIDATE_SORT_FIELDS = {
     "id": Employee.id,
@@ -184,10 +188,16 @@ def _normalize_parsed_email(value: object | None) -> str | None:
 
 def _extract_email_from_preview(parsed: dict) -> str | None:
     preview = str(parsed.get("preview") or "")
-    match = _PREVIEW_EMAIL_RE.search(preview)
-    if not match:
+    if not preview:
         return None
-    return _normalize_parsed_email(match.group(0))
+    for variant in _contact_preview_variants(preview):
+        match = _PREVIEW_EMAIL_RE.search(variant)
+        if not match:
+            continue
+        normalized = _normalize_parsed_email(match.group(0))
+        if normalized:
+            return normalized
+    return None
 
 
 def _resolve_candidate_email(db: Session, parsed: dict) -> str:
@@ -204,20 +214,62 @@ def _resolve_candidate_email(db: Session, parsed: dict) -> str:
 
 
 def _normalize_parsed_phone(value: object | None) -> str | None:
-    phone = re.sub(r"\s+", " ", str(value or "")).strip()
-    return phone or None
+    phone = str(value or "")
+    if not phone:
+        return None
+    phone = phone.replace("\u200b", " ").replace("\u200c", " ").replace("\u200d", " ")
+    phone = re.sub(r"\s+", " ", phone).strip(" -,:;|.")
+    if not phone:
+        return None
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) < 8 or len(digits) > 15:
+        return None
+    if len(set(digits)) <= 1:
+        return None
+    return phone
 
 
 def _extract_phone_from_preview(parsed: dict) -> str | None:
     preview = str(parsed.get("preview") or "")
-    for match in _PREVIEW_PHONE_RE.finditer(preview):
-        phone = _normalize_parsed_phone(match.group(0))
-        if not phone:
-            continue
-        digits = re.sub(r"\D", "", phone)
-        if 8 <= len(digits) <= 15 and len(set(digits)) > 1:
-            return phone
+    if not preview:
+        return None
+    for variant in _contact_preview_variants(preview):
+        for match in _PREVIEW_PHONE_RE.finditer(variant):
+            phone = _normalize_parsed_phone(match.group(0))
+            if phone:
+                return phone
+        labeled = re.search(
+            r"(?i)(?:phone|telephone|tel|mobile|gsm)\s*[:\-]?\s*([+()\d][\d\s().\-]{6,})",
+            variant,
+        )
+        if labeled:
+            phone = _normalize_parsed_phone(labeled.group(1))
+            if phone:
+                return phone
     return None
+
+
+def _contact_preview_variants(preview: str) -> list[str]:
+    variants: list[str] = []
+
+    def _append(value: str) -> None:
+        text = str(value or "").strip()
+        if text and text not in variants:
+            variants.append(text)
+
+    base = str(preview or "")
+    _append(base)
+
+    normalized = _OBFUSCATED_AT_RE.sub("@", base)
+    normalized = _OBFUSCATED_DOT_RE.sub(".", normalized)
+    normalized = re.sub(r"\s*@\s*", "@", normalized)
+    normalized = re.sub(r"\s*\.\s*", ".", normalized)
+    _append(normalized)
+
+    compact = re.sub(r"[\s\u200b\u200c\u200d]+", "", normalized)
+    _append(compact)
+
+    return variants
 
 
 def _resolve_candidate_phone(parsed: dict) -> str | None:

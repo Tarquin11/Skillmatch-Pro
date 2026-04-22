@@ -195,9 +195,15 @@ _TITLE_KEYWORDS = (
 )
 _EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().\-]{6,}\d)(?!\w)")
+_OBFUSCATED_AT_RE = re.compile(
+    r"(?i)(?<=[A-Z0-9._%+\-])\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\bat\b)\s*(?=[A-Z0-9.\-])"
+)
+_OBFUSCATED_DOT_RE = re.compile(r"(?i)(?<=[A-Z0-9])\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*(?=[A-Z0-9])")
 _NAME_TOKEN_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'`-]{0,29}$")
 _CONTACT_URL_HINTS = ("http://", "https://", "www.", "linkedin", "github")
 _CONTACT_LABEL_HINTS = ("phone", "telephone", "tel", "mobile", "gsm", "email", "mail")
+_CONTACT_SCAN_CHARS = 6000
+_PREVIEW_CONTACT_CHARS = 1200
 _NAME_STOPWORDS = frozenset(
     {
         "curriculum",
@@ -2694,15 +2700,50 @@ def extract_full_name(text: str, email_hint: str | None = None) -> str | None:
     return None
 
 
+def _contact_text_variants(text: str) -> list[str]:
+    variants: list[str] = []
+
+    def _append(value: str) -> None:
+        candidate = str(value or "").strip()
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+
+    base = str(text or "")[:_CONTACT_SCAN_CHARS]
+    _append(base)
+
+    header = "\n".join(_header_lines(base, limit=40))
+    if header and header != base:
+        _append(header)
+
+    seeds = list(variants)
+    for seed in seeds:
+        normalized = _OBFUSCATED_AT_RE.sub("@", seed)
+        normalized = _OBFUSCATED_DOT_RE.sub(".", normalized)
+        normalized = re.sub(r"\s*@\s*", "@", normalized)
+        normalized = re.sub(r"\s*\.\s*", ".", normalized)
+        _append(normalized)
+
+        compact = re.sub(r"[\s\u200b\u200c\u200d]+", "", normalized)
+        _append(compact)
+
+    return variants
+
+
 def extract_email(text: str) -> str | None:
-    match = _EMAIL_RE.search(text or "")
-    if not match:
-        return None
-    return match.group(0).strip().lower() or None
+    for variant in _contact_text_variants(text):
+        match = _EMAIL_RE.search(variant)
+        if not match:
+            continue
+        normalized = match.group(0).strip().lower()
+        if normalized:
+            return normalized
+    return None
 
 
 def _clean_phone_candidate(value: str) -> str | None:
-    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" -,:;|.")
+    cleaned = str(value or "")
+    cleaned = cleaned.replace("\u200b", " ").replace("\u200c", " ").replace("\u200d", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -,:;|.")
     digits = re.sub(r"\D", "", cleaned)
     if len(digits) < 8 or len(digits) > 15:
         return None
@@ -2715,7 +2756,7 @@ def _clean_phone_candidate(value: str) -> str | None:
 
 def extract_phone(text: str) -> str | None:
     candidates: list[tuple[int, int, str]] = []
-    for index, line in enumerate(_header_lines(text, limit=20)):
+    for index, line in enumerate(_header_lines(text, limit=40)):
         line_lower = line.lower()
         for match in _PHONE_RE.finditer(line):
             cleaned = _clean_phone_candidate(match.group(0))
@@ -2731,6 +2772,21 @@ def extract_phone(text: str) -> str | None:
             if index <= 4:
                 score += 1
             candidates.append((score, -index, cleaned))
+    if not candidates:
+        for variant in _contact_text_variants(text):
+            for match in _PHONE_RE.finditer(variant):
+                cleaned = _clean_phone_candidate(match.group(0))
+                if not cleaned:
+                    continue
+                context = variant[max(0, match.start() - 40): min(len(variant), match.end() + 40)].lower()
+                score = 0
+                if cleaned.startswith("+"):
+                    score += 2
+                if any(hint in context for hint in _CONTACT_LABEL_HINTS):
+                    score += 3
+                if "@" in context:
+                    score += 1
+                candidates.append((score, -match.start(), cleaned))
     if not candidates:
         return None
     candidates.sort(reverse=True)
@@ -2993,7 +3049,7 @@ def parse_cv_safe(
         result["warnings"].append("text_truncated")
 
     result["text_length"] = len(text)
-    result["preview"] = text[:200]
+    result["preview"] = text[:_PREVIEW_CONTACT_CHARS]
 
     if not text.strip():
         result["degraded"] = True

@@ -1,3 +1,4 @@
+import re
 import uuid
 
 from app.api import candidates as candidates_api
@@ -185,6 +186,37 @@ def test_upload_cv_falls_back_to_preview_contact_details(client, admin_auth, mon
     assert first["full_name"] == "Anissa Ben Salem"
     assert first["email"] == f"anissa.ben.salem.{marker}@example.com"
     assert first["phone"] == "+216 22 000 111"
+
+
+def test_upload_cv_falls_back_to_obfuscated_preview_contact_details(client, admin_auth, monkeypatch):
+    marker = uuid.uuid4().hex[:8]
+    preview = (
+        "Nour El Houda Souissi\n"
+        f"Email: nour.el.houda.{marker} [at] outlook [dot] com\n"
+        "Mobile: +216 5 4 1 4 2 3 1 6\n"
+    )
+    monkeypatch.setattr(
+        candidates_api,
+        "parse_cv_safe",
+        lambda **_: _fake_parsed_payload(
+            extracted_full_name=None,
+            extracted_email=None,
+            extracted_phone=None,
+            preview=preview,
+        ),
+        raising=False,
+    )
+    files = {"file": (f"nour_{marker}.pdf", b"%PDF-1.7\n%fake cv content", "application/pdf")}
+    upload = client.post("/candidates/upload_cv", headers=admin_auth, files=files)
+    assert upload.status_code == 200, upload.text
+
+    listed = client.get("/candidates/", headers=admin_auth, params={"search": marker, "limit": 20})
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()
+    assert rows, "Expected candidate row from obfuscated preview fallback"
+    first = rows[0]
+    assert first["email"] == f"nour.el.houda.{marker}@outlook.com"
+    assert re.sub(r"\D", "", str(first.get("phone") or "")) == "21654142316"
 
 
 def test_upload_cv_aliases_duplicate_extracted_email(client, admin_auth, monkeypatch):

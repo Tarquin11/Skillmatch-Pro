@@ -1,3 +1,5 @@
+import re
+
 from app.services import cv_parser
 from app.services.cv_parser import (
     _extract_sections,
@@ -99,6 +101,24 @@ def test_parse_cv_safe_inferrs_name_from_email_when_header_is_noisy(monkeypatch)
     assert payload["extracted_full_name"] == "Anissa Ben Salem"
     assert payload["extracted_email"] == "anissa.ben-salem@example.com"
     assert payload["extracted_phone"] == "+216 22 000 111"
+
+
+def test_parse_cv_safe_extracts_obfuscated_email_and_spaced_phone(monkeypatch):
+    text = (
+        "Nour El Houda Souissi\n"
+        "Email: nour.el.houda [at] outlook [dot] com\n"
+        "Mobile: +216 5 4 1 4 2 3 1 6\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=[],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    assert payload["extracted_email"] == "nour.el.houda@outlook.com"
+    assert re.sub(r"\D", "", payload["extracted_phone"] or "") == "21654142316"
 
 
 def test_detect_experience_years_from_explicit_pattern():
