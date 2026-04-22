@@ -59,6 +59,8 @@ def test_e2e_cv_upload_parse_create_candidate_then_match(client, admin_auth, mon
             "sentence": [],
             "semantic_augment": [],
             "language": ["english"],
+            "certification": [],
+            "hands_on_project": [],
             "project_text": [],
         },
         "extracted_skills": [
@@ -67,8 +69,13 @@ def test_e2e_cv_upload_parse_create_candidate_then_match(client, admin_auth, mon
             {"skill": "docker", "confidence": 0.97, "confidence_normalized": 0.98, "source": "lexicon", "evidence": []},
         ],
         "preview": "Backend engineer profile",
+        "extracted_full_name": None,
+        "extracted_email": None,
+        "extracted_phone": None,
         "predicted_title": "Backend Engineer",
         "predicted_experience_years": 2.0,
+        "certifications": [],
+        "hands_on_projects": [],
     }
     monkeypatch.setattr(candidates_api, "parse_cv_safe", lambda **_: fake_parsed, raising=False)
 

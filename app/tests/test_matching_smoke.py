@@ -53,6 +53,8 @@ def test_upload_cv_smoke(client, admin_auth, monkeypatch):
                 "sentence": [],
                 "semantic_augment": [],
                 "language": ["english"],
+                "certification": [],
+                "hands_on_project": [],
                 "project_text": [],
             },
             "preview": "Python SQL",
@@ -60,8 +62,13 @@ def test_upload_cv_smoke(client, admin_auth, monkeypatch):
                 {"skill": "python", "confidence": 0.98, "confidence_normalized": 1.0, "source": "exact", "evidence": []},
                 {"skill": "sql", "confidence": 0.98, "confidence_normalized": 1.0, "source": "exact", "evidence": []},
             ],
+            "extracted_full_name": None,
+            "extracted_email": None,
+            "extracted_phone": None,
             "predicted_title": "Developer",
             "predicted_experience_years": 1.0,
+            "certifications": [],
+            "hands_on_projects": [],
         },
     )
 
@@ -108,6 +115,8 @@ def test_match_job_can_scope_to_saved_candidates_only(client, admin_auth, monkey
                 "sentence": [],
                 "semantic_augment": [],
                 "language": ["english"],
+                "certification": [],
+                "hands_on_project": [],
                 "project_text": [],
             },
             "preview": "Python SQL",
@@ -115,8 +124,13 @@ def test_match_job_can_scope_to_saved_candidates_only(client, admin_auth, monkey
                 {"skill": "python", "confidence": 0.98, "confidence_normalized": 1.0, "source": "exact", "evidence": []},
                 {"skill": "sql", "confidence": 0.98, "confidence_normalized": 1.0, "source": "exact", "evidence": []},
             ],
+            "extracted_full_name": None,
+            "extracted_email": None,
+            "extracted_phone": None,
             "predicted_title": "Backend Engineer",
             "predicted_experience_years": 1.0,
+            "certifications": [],
+            "hands_on_projects": [],
         },
     )
     files = {"file": (f"candidate_scope_{uid}.pdf", b"%PDF-1.4 fake", "application/pdf")}
@@ -137,5 +151,4 @@ def test_match_job_can_scope_to_saved_candidates_only(client, admin_auth, monkey
     body = r.json()
     ids = {int(row["employee_id"]) for row in body["results"]}
     assert employee_id not in ids
-
 

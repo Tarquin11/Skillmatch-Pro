@@ -30,6 +30,8 @@ def _fake_parsed_payload(**overrides) -> dict:
             "sentence": [],
             "semantic_augment": [],
             "language": ["english"],
+            "certification": ["AWS Certified Developer"],
+            "hands_on_project": ["Built an internal applicant tracking dashboard using React and FastAPI"],
             "project_text": [],
         },
         "extracted_skills": [
@@ -43,6 +45,8 @@ def _fake_parsed_payload(**overrides) -> dict:
         "extracted_phone": "+216 54 111 222",
         "predicted_title": "Backend Engineer",
         "predicted_experience_years": 3.0,
+        "certifications": ["AWS Certified Developer"],
+        "hands_on_projects": ["Built an internal applicant tracking dashboard using React and FastAPI"],
     }
     payload.update(overrides)
     return payload
@@ -83,6 +87,8 @@ def test_upload_cv_autosaves_profile_and_lists_in_candidates(client, admin_auth,
     assert first["phone"] == "+216 54 111 222"
     assert first["predicted_title"] == "Backend Engineer"
     assert set(first["skills"]) >= {"python", "sql", "docker"}
+    assert first["certifications"] == ["AWS Certified Developer"]
+    assert first["hands_on_projects"] == ["Built an internal applicant tracking dashboard using React and FastAPI"]
 
     search = client.get("/candidates/", headers=admin_auth, params={"search": marker, "limit": 20})
     assert search.status_code == 200, search.text
@@ -116,6 +122,11 @@ def test_update_candidate_name_id_and_skills(client, admin_auth, monkeypatch):
             "full_name": "Joanne Cain",
             "employee_number": f"CAND-{marker.upper()}",
             "skills": ["html", "css", "javascript", "html"],
+            "certifications": ["Azure Fundamentals", "AWS Practitioner", "Azure Fundamentals"],
+            "hands_on_projects": [
+                "Built an internship matching portal with Angular and FastAPI",
+                "Automated CV parsing benchmark runner",
+            ],
         },
     )
     assert patched.status_code == 200, patched.text
@@ -123,6 +134,11 @@ def test_update_candidate_name_id_and_skills(client, admin_auth, monkeypatch):
     assert updated["full_name"] == "Joanne Cain"
     assert updated["employee_number"] == f"CAND-{marker.upper()}"
     assert set(updated["skills"]) == {"html", "css", "javascript"}
+    assert updated["certifications"] == ["Azure Fundamentals", "AWS Practitioner"]
+    assert updated["hands_on_projects"] == [
+        "Built an internship matching portal with Angular and FastAPI",
+        "Automated CV parsing benchmark runner",
+    ]
 
 
 def test_update_candidate_rejects_duplicate_employee_number(client, admin_auth, monkeypatch):

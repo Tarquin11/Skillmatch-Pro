@@ -23,8 +23,13 @@ def _assert_safe_contract(payload: dict) -> None:
         "extraction_channels",
         "preview",
         "extracted_skills",
+        "extracted_full_name",
+        "extracted_email",
+        "extracted_phone",
         "predicted_title",
         "predicted_experience_years",
+        "certifications",
+        "hands_on_projects",
     }
     assert set(payload.keys()) == expected_keys
     assert isinstance(payload["ok"], bool)
@@ -42,6 +47,8 @@ def _assert_safe_contract(payload: dict) -> None:
     assert isinstance(payload["text_length"], int)
     assert payload["text_length"] >= 0
     assert isinstance(payload["extracted_skills"], list)
+    assert isinstance(payload["certifications"], list)
+    assert isinstance(payload["hands_on_projects"], list)
     # Validate schema-level compatibility for API responses.
     CandidateUploadRespose(**payload)
 

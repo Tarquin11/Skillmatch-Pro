@@ -28,14 +28,21 @@ def _valid_payload(*, degraded: bool = False, empty_text: bool = False) -> dict:
             "sentence": [],
             "semantic_augment": [],
             "language": [],
+            "certification": [],
+            "hands_on_project": [],
             "project_text": [],
         },
         "preview": "test",
         "extracted_skills": [
             {"skill": "python", "confidence": 0.9, "confidence_normalized": 1.0, "source": "exact", "evidence": []}
         ],
+        "extracted_full_name": None,
+        "extracted_email": None,
+        "extracted_phone": None,
         "predicted_title": "Developer",
         "predicted_experience_years": 2.0,
+        "certifications": [],
+        "hands_on_projects": [],
     }
 
 

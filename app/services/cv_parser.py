@@ -60,6 +60,18 @@ _CERTIFICATION_HEADING_HINTS = (
     "diplomas",
     "training",
 )
+_PROJECT_HEADING_HINTS = (
+    "project",
+    "projects",
+    "personal projects",
+    "academic projects",
+    "professional projects",
+    "hands on",
+    "hands-on",
+    "portfolio",
+    "realisation",
+    "réalisation",
+)
 _LANGUAGE_HEADING_HINTS = ("language", "languages", "langue", "langues", "idioma", "idiomas")
 _DURATION_PHRASE_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:months?|years?|yrs?)$", re.I)
 WORD_RE = re.compile(r"[a-z0-9+.#/\-]+")
@@ -384,6 +396,12 @@ def _is_language_heading(section_key: str) -> bool:
 def _is_certification_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _CERTIFICATION_HEADING_HINTS)
+
+
+def _is_project_heading(section_key: str) -> bool:
+    key = _normalize_text(section_key)
+    return any(h in key for h in _PROJECT_HEADING_HINTS)
+
 
 def _is_noise_skill_phrase(phrase: str) -> bool:
     p = _normalize_text(phrase)
@@ -1399,6 +1417,14 @@ _OPEN_VOCAB_CERT_MARKER_RE = re.compile(
     r"\b(?:certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|diplome|diplomes)\b",
     re.IGNORECASE,
 )
+_CERTIFICATION_MARKER_RE = re.compile(
+    r"\b(?:certified|certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|license|licensed)\b",
+    re.IGNORECASE,
+)
+_PROJECT_ACTION_HINT_RE = re.compile(
+    r"\b(?:built|build|developed|developing|implemented|created|designed|deployed|led|worked on|contributed|réalisé|realise|realised|developpe|développé)\b",
+    re.IGNORECASE,
+)
 _INLINE_LABEL_SPLIT_RE = re.compile(r"^\s*([^:]{2,64}?)\s*:\s*(.+?)\s*$")
 _LANGUAGE_PHRASE_STOPWORDS = frozenset(
     {
@@ -1842,6 +1868,191 @@ def extract_language_details_from_anywhere(
     return out
 
 
+def _normalize_board_entry(raw: str) -> str:
+    value = _strip_open_vocab_leading_junk(str(raw or ""))
+    value = _strip_parenthetical_qualifiers(value)
+    value = re.sub(r"^\s*(?:[-*•]|â€¢)\s*", "", value).strip()
+    value = re.sub(r"\s+", " ", value).strip(" .,:;|")
+    return value[:220]
+
+
+def _looks_like_skill_inventory_line(line: str) -> bool:
+    normalized = _normalize_text(line)
+    if not normalized:
+        return True
+    parts = [part.strip() for part in re.split(r"[,\|;/&]+", normalized) if part.strip()]
+    if len(parts) < 3:
+        return False
+    short_parts = sum(1 for part in parts if len(part.split()) <= 3)
+    return short_parts >= max(3, len(parts) - 1)
+
+
+def _dedupe_board_entries(items: list[str], max_items: int) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in items:
+        value = _normalize_board_entry(raw)
+        if not value:
+            continue
+        key = _normalize_text(value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def extract_certifications_from_sections(text: str, max_items: int = 40) -> list[str]:
+    sections, _weights = _extract_sections(text)
+    entries: list[str] = []
+    for section, lines in sections.items():
+        if not _is_certification_heading(section):
+            continue
+        for raw_line in lines:
+            line = raw_line[:MAX_LINE_CHARS].strip()
+            if not line or _is_noise_line(line):
+                continue
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
+            for part in re.split(r"[,\|;]+", candidate):
+                cleaned = _normalize_board_entry(part)
+                if not cleaned:
+                    continue
+                entries.append(cleaned)
+
+    if len(entries) < max_items:
+        for raw_line in (text or "").splitlines()[:MAX_LINES]:
+            line = raw_line[:MAX_LINE_CHARS].strip()
+            if not line:
+                continue
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
+            normalized = _normalize_board_entry(candidate)
+            if not normalized:
+                continue
+            if _CERTIFICATION_MARKER_RE.search(normalized):
+                entries.append(normalized)
+            if len(entries) >= max_items:
+                break
+
+    return _dedupe_board_entries(entries, max_items=max_items)
+
+
+def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> list[str]:
+    sections, _weights = _extract_sections(text)
+    entries: list[str] = []
+    for section, lines in sections.items():
+        section_is_project = _is_project_heading(section)
+        if not section_is_project:
+            continue
+        for raw_line in lines:
+            line = raw_line[:MAX_LINE_CHARS].strip()
+            if not line or _is_noise_line(line):
+                continue
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            candidate = inline_tail if inline_label and _is_project_heading(inline_label) else line
+            cleaned = _normalize_board_entry(candidate)
+            if not cleaned:
+                continue
+            if _looks_like_skill_inventory_line(cleaned):
+                continue
+            if len(cleaned.split()) < 2 and not _PROJECT_ACTION_HINT_RE.search(cleaned):
+                continue
+            entries.append(cleaned)
+            if len(entries) >= max_items:
+                return _dedupe_board_entries(entries, max_items=max_items)
+
+    if len(entries) < max_items:
+        for raw_line in (text or "").splitlines()[:MAX_LINES]:
+            line = raw_line[:MAX_LINE_CHARS].strip()
+            if not line:
+                continue
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            if inline_label and not _is_project_heading(inline_label):
+                continue
+            candidate = inline_tail if inline_tail else line
+            cleaned = _normalize_board_entry(candidate)
+            if not cleaned or _looks_like_skill_inventory_line(cleaned):
+                continue
+            if not _PROJECT_ACTION_HINT_RE.search(cleaned):
+                continue
+            entries.append(cleaned)
+            if len(entries) >= max_items:
+                break
+
+    return _dedupe_board_entries(entries, max_items=max_items)
+
+
+def extract_context_board_skill_rows(
+    certifications: list[str],
+    hands_on_projects: list[str],
+    known_skills: Iterable[str],
+    min_confidence: float,
+    max_rows: int = 30,
+) -> list[dict[str, Any]]:
+    known_list = [str(skill or "").strip() for skill in known_skills if str(skill or "").strip()]
+    if not known_list:
+        return []
+    index = _build_skill_index(known_list)
+    if not index:
+        return []
+
+    alias_to_skill: dict[str, str] = {}
+    for canonical, meta in index.items():
+        for alias in meta.get("aliases", set()):
+            if not alias:
+                continue
+            alias_to_skill.setdefault(alias, canonical)
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    floor = max(float(min_confidence), 0.60)
+    sources = [
+        ("certification", certifications, 0.66),
+        ("hands_on_project", hands_on_projects, 0.64),
+    ]
+
+    for source_name, entries, base_confidence in sources:
+        for entry in entries:
+            if len(rows) >= max_rows:
+                return rows
+            normalized = _normalize_for_pattern(entry)
+            tokens = _tokenize(normalized)
+            if not tokens:
+                continue
+            ngrams = _ngram_candidates(tokens[:60], max_n=4)
+            matches: set[str] = set()
+            for gram in ngrams:
+                key = _skill_key(gram)
+                if not key:
+                    continue
+                skill = alias_to_skill.get(key)
+                if not skill:
+                    continue
+                matches.add(skill)
+
+            for skill in sorted(matches, key=lambda value: _normalize_text(value)):
+                sk = _skill_key(skill)
+                if not sk or sk in seen:
+                    continue
+                seen.add(sk)
+                evidence = re.sub(r"\s+", " ", entry).strip()[:180]
+                rows.append(
+                    {
+                        "skill": skill,
+                        "confidence": round(max(floor, min(0.72, base_confidence)), 2),
+                        "source": f"context_board:{source_name}",
+                        "evidence": [evidence] if evidence else [],
+                    }
+                )
+                if len(rows) >= max_rows:
+                    return rows
+
+    return rows
+
+
 def extract_open_vocabulary_skill_rows(
     text: str,
     catalog_skill_keys: set[str],
@@ -2174,6 +2385,10 @@ def _source_channel_family(source: str) -> str:
         return "semantic"
     if s.startswith("semantic_augment"):
         return "semantic_augment"
+    if s.startswith("context_board:certification"):
+        return "certification"
+    if s.startswith("context_board:hands_on_project"):
+        return "hands_on_project"
     if s.startswith("sentence_bullet"):
         return "sentence_bullet"
     if s.startswith("sentence_text"):
@@ -2197,6 +2412,10 @@ def _source_label_key(source: str) -> str:
         return "semantic"
     if fam == "semantic_augment":
         return "augment"
+    if fam == "certification":
+        return "section"
+    if fam == "hands_on_project":
+        return "section"
     if fam.startswith("sentence"):
         return "sentence"
     if fam == "softskill":
@@ -2215,7 +2434,7 @@ def _confidence_band_for_source(source: str, confidence: float) -> str:
         if c >= 0.64:
             return "medium"
         return "low"
-    if fam in {"open_vocab", "sentence_bullet", "sentence_text", "semantic_augment"}:
+    if fam in {"open_vocab", "sentence_bullet", "sentence_text", "semantic_augment", "certification", "hands_on_project"}:
         if c >= 0.70:
             return "medium"
         return "low"
@@ -2996,6 +3215,8 @@ def parse_cv_safe(
             "sentence": [],
             "semantic_augment": [],
             "language": [],
+            "certification": [],
+            "hands_on_project": [],
             "project_text": [],
         },
         "preview": "",
@@ -3005,6 +3226,8 @@ def parse_cv_safe(
         "extracted_phone": None,
         "predicted_title": None,
         "predicted_experience_years": None,
+        "certifications": [],
+        "hands_on_projects": [],
     }
 
     if not isinstance(file_bytes, (bytes, bytearray)):
@@ -3082,6 +3305,17 @@ def parse_cv_safe(
         result["errors"].append(_stage_error("extract_languages_from_sections", exc))
 
     try:
+        certifications = extract_certifications_from_sections(text)
+        hands_on_projects = extract_hands_on_projects_from_sections(text)
+        result["certifications"] = certifications
+        result["hands_on_projects"] = hands_on_projects
+        result["extraction_channels"]["certification"] = list(certifications)
+        result["extraction_channels"]["hands_on_project"] = list(hands_on_projects)
+    except Exception as exc:
+        result["degraded"] = True
+        result["errors"].append(_stage_error("extract_candidate_boards", exc))
+
+    try:
         skill_budget = DEFAULT_SKILL_TIME_BUDGET_SECONDS
         if len(text) > 80_000:
             skill_budget = 0.20
@@ -3124,7 +3358,13 @@ def parse_cv_safe(
         )
         soft_rows = extract_soft_skill_rows(text=text, min_confidence=safe_min_conf, fallback_mode=False)
         sentence_rows = extract_sentence_skill_rows(text=text, min_confidence=safe_min_conf, debug=False)
-        rows = _merge_skill_rows(rows, open_rows + ner_rows + soft_rows + sentence_rows)
+        context_board_rows = extract_context_board_skill_rows(
+            certifications=[str(item or "") for item in result.get("certifications", [])],
+            hands_on_projects=[str(item or "") for item in result.get("hands_on_projects", [])],
+            known_skills=skills_list,
+            min_confidence=safe_min_conf,
+        )
+        rows = _merge_skill_rows(rows, open_rows + ner_rows + soft_rows + sentence_rows + context_board_rows)
         soft_channel_names = [
             str(r.get("skill")).strip()
             for r in soft_rows

@@ -1,4 +1,5 @@
 import io
+import json
 import logging
 import re
 import uuid
@@ -53,6 +54,8 @@ _CANDIDATE_SORT_FIELDS = {
     "title": Employee.position,
     "uploaded_at": Employee.created_at,
 }
+_MAX_BOARD_ITEMS = 80
+_MAX_BOARD_ITEM_CHARS = 220
 
 
 def _sniff_cv_mime(file_bytes: bytes) -> str:
@@ -123,6 +126,8 @@ def _candidate_item_from_employee(employee: Employee) -> CandidateListItem:
     uploaded_at = None
     if getattr(employee, "created_at", None) is not None:
         uploaded_at = employee.created_at.isoformat()
+    certifications = _parse_board_items(getattr(employee, "candidate_certifications", None))
+    hands_on_projects = _parse_board_items(getattr(employee, "candidate_projects", None))
     return CandidateListItem(
         id=int(employee.id),
         employee_number=str(employee.employee_number or "").strip(),
@@ -132,6 +137,8 @@ def _candidate_item_from_employee(employee: Employee) -> CandidateListItem:
         predicted_title=(str(employee.position or "").strip() or None),
         predicted_experience_years=_experience_years_from_hire_date(getattr(employee, "hire_date", None)),
         skills=skills,
+        certifications=certifications,
+        hands_on_projects=hands_on_projects,
         uploaded_at=uploaded_at,
     )
 
@@ -162,6 +169,50 @@ def _normalize_skill_names(raw_skills: list[str]) -> list[str]:
         seen.add(key)
         cleaned.append(name)
     return cleaned
+
+
+def _normalize_board_items(values: list[str], *, max_items: int = _MAX_BOARD_ITEMS) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = re.sub(r"\s+", " ", str(raw or "")).strip()
+        if not value:
+            continue
+        value = value[:_MAX_BOARD_ITEM_CHARS]
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(value)
+        if len(cleaned) >= max_items:
+            break
+    return cleaned
+
+
+def _parse_board_items(raw: object | None) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return _normalize_board_items([str(item or "") for item in raw])
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            decoded = json.loads(text)
+        except Exception:
+            return []
+        if not isinstance(decoded, list):
+            return []
+        return _normalize_board_items([str(item or "") for item in decoded])
+    return []
+
+
+def _serialize_board_items(values: list[str]) -> str | None:
+    normalized = _normalize_board_items(values)
+    if not normalized:
+        return None
+    return json.dumps(normalized, ensure_ascii=False)
 
 
 def _generated_candidate_email() -> str:
@@ -332,6 +383,8 @@ def _persist_candidate_profile(
         employment_status="candidate",
         recruitment_source="cv_upload",
         hire_date=_predicted_hire_date(_safe_float(parsed.get("predicted_experience_years"))),
+        candidate_certifications=_serialize_board_items(parsed.get("certifications") or []),
+        candidate_projects=_serialize_board_items(parsed.get("hands_on_projects") or []),
         created_by=created_by,
     )
     db.add(employee)
@@ -452,6 +505,12 @@ def update_candidate(
                 db.add(skill)
                 db.flush()
             db.add(EmployeeSkill(employee_id=int(candidate.id), skill_id=int(skill.id), level=3))
+
+    if "certifications" in updates:
+        candidate.candidate_certifications = _serialize_board_items(updates.get("certifications") or [])
+
+    if "hands_on_projects" in updates:
+        candidate.candidate_projects = _serialize_board_items(updates.get("hands_on_projects") or [])
 
     db.commit()
     db.refresh(candidate)
@@ -576,11 +635,13 @@ async def upload_cv(
             extraction_channels=parsed["extraction_channels"],
             extracted_skills=parsed["extracted_skills"],
             preview=parsed["preview"],
-            extracted_full_name=parsed["extracted_full_name"],
-            extracted_email=parsed["extracted_email"],
-            extracted_phone=parsed["extracted_phone"],
-            predicted_title=parsed["predicted_title"],
-            predicted_experience_years=parsed["predicted_experience_years"],
+            extracted_full_name=parsed.get("extracted_full_name"),
+            extracted_email=parsed.get("extracted_email"),
+            extracted_phone=parsed.get("extracted_phone"),
+            predicted_title=parsed.get("predicted_title"),
+            predicted_experience_years=parsed.get("predicted_experience_years"),
+            certifications=parsed.get("certifications") or [],
+            hands_on_projects=parsed.get("hands_on_projects") or [],
         )
     except HTTPException:
         raise

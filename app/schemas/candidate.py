@@ -23,6 +23,8 @@ class CandidateExtractionChannels(StrictBaseModel):
     sentence: List[str] = Field(default_factory=list)
     semantic_augment: List[str] = Field(default_factory=list)
     language: List[str] = Field(default_factory=list)
+    certification: List[str] = Field(default_factory=list)
+    hands_on_project: List[str] = Field(default_factory=list)
     project_text: List[str] = Field(default_factory=list)
 
 
@@ -56,6 +58,8 @@ class CandidateUploadRespose(StrictBaseModel):
     extracted_phone: str | None = None
     predicted_title: str | None = None
     predicted_experience_years: float | None = None
+    certifications: List[str] = Field(default_factory=list)
+    hands_on_projects: List[str] = Field(default_factory=list)
 
 
 class CandidateListItem(StrictBaseModel):
@@ -67,6 +71,8 @@ class CandidateListItem(StrictBaseModel):
     predicted_title: str | None = None
     predicted_experience_years: float | None = None
     skills: List[str] = Field(default_factory=list)
+    certifications: List[str] = Field(default_factory=list)
+    hands_on_projects: List[str] = Field(default_factory=list)
     uploaded_at: str | None = None
 
 
@@ -74,3 +80,5 @@ class CandidateUpdateRequest(StrictBaseModel):
     full_name: str | None = None
     employee_number: str | None = None
     skills: List[str] | None = None
+    certifications: List[str] | None = None
+    hands_on_projects: List[str] | None = None

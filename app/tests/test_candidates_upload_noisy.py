@@ -18,8 +18,13 @@ def _assert_upload_contract(body: dict) -> None:
         "extraction_channels",
         "preview",
         "extracted_skills",
+        "extracted_full_name",
+        "extracted_email",
+        "extracted_phone",
         "predicted_title",
         "predicted_experience_years",
+        "certifications",
+        "hands_on_projects",
     }
     assert set(body.keys()) == expected
     assert isinstance(body["ok"], bool)
@@ -34,6 +39,8 @@ def _assert_upload_contract(body: dict) -> None:
     assert isinstance(body["language_details"], list)
     assert isinstance(body["extraction_channels"], dict)
     assert isinstance(body["extracted_skills"], list)
+    assert isinstance(body["certifications"], list)
+    assert isinstance(body["hands_on_projects"], list)
     assert isinstance(body["preview"], str)
     assert isinstance(body["text_length"], int)
 

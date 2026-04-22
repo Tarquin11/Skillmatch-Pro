@@ -238,6 +238,37 @@ def test_parse_cv_safe_keeps_multiple_skills_from_comma_certification_line(monke
         assert conf["symfony"] >= 0.5
 
 
+def test_parse_cv_safe_separates_certifications_projects_and_skills(monkeypatch):
+    text = (
+        "CERTIFICATIONS\n"
+        "- AWS Certified Developer Associate\n"
+        "PROJECTS\n"
+        "- Built an internship matching platform using Angular and FastAPI\n"
+        "SKILLS\n"
+        "- Python\n"
+        "- SQL\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["python", "sql", "angular", "fastapi"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+
+    assert "AWS Certified Developer Associate" in payload["certifications"]
+    assert "Built an internship matching platform using Angular and FastAPI" in payload["hands_on_projects"]
+    assert payload["extraction_channels"]["certification"]
+    assert payload["extraction_channels"]["hands_on_project"]
+
+    skill_set = {str(skill).lower() for skill in payload["skills"]}
+    assert "python" in skill_set
+    assert "sql" in skill_set
+    assert "aws certified developer associate" not in skill_set
+    assert "built an internship matching platform using angular and fastapi" not in skill_set
+
+
 def test_open_vocab_noise_rejects_including_phrases():
     assert cv_parser._open_vocab_looks_like_noise_sentence("including html5, php oop, javascript, css, sql")
     assert cv_parser._open_vocab_looks_like_noise_sentence("experience in web application development")

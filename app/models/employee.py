@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, Float, Index, Integer, String
+from sqlalchemy import Column, Date, Float, Index, Integer, String, Text
 from sqlalchemy.orm import relationship, synonym
 from app.db.database import Base
 from app.models.mixins import AuditMixin
@@ -46,6 +46,8 @@ class Employee(AuditMixin, Base):
 
     # Recrutement
     recruitment_source = Column("recruitement_source", String, nullable=True)
+    candidate_certifications = Column(Text, nullable=True)
+    candidate_projects = Column(Text, nullable=True)
     skills = relationship("EmployeeSkill", back_populates="employee", cascade="all, delete-orphan")
 
     __table_args__ = (
