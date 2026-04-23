@@ -642,6 +642,7 @@ async def upload_cv(
             predicted_experience_years=parsed.get("predicted_experience_years"),
             certifications=parsed.get("certifications") or [],
             hands_on_projects=parsed.get("hands_on_projects") or [],
+            project_skill_links=parsed.get("project_skill_links") or [],
         )
     except HTTPException:
         raise

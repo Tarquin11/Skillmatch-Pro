@@ -26,6 +26,14 @@ class CandidateExtractionChannels(StrictBaseModel):
     certification: List[str] = Field(default_factory=list)
     hands_on_project: List[str] = Field(default_factory=list)
     project_text: List[str] = Field(default_factory=list)
+    project_validated_skill: List[str] = Field(default_factory=list)
+
+
+class CandidateProjectSkillLink(StrictBaseModel):
+    project: str
+    skill: str
+    evidence_span: str
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class CandidateSkillHierarchyNode(StrictBaseModel):
@@ -60,6 +68,7 @@ class CandidateUploadRespose(StrictBaseModel):
     predicted_experience_years: float | None = None
     certifications: List[str] = Field(default_factory=list)
     hands_on_projects: List[str] = Field(default_factory=list)
+    project_skill_links: List[CandidateProjectSkillLink] = Field(default_factory=list)
 
 
 class CandidateListItem(StrictBaseModel):

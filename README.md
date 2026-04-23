@@ -76,17 +76,17 @@ alembic upgrade head
 ### 5. Run API
 
 ```powershell
-uvicorn app.main:app --reload
+uvicorn app.main:app --ssl-keyfile=./localhost-key.pem --ssl-certfile=./localhost.pem
 ```
 
 Health check:
 
 ```powershell
-curl http://127.0.0.1:8000/
+curl https://127.0.0.1:8000/
 ```
 
 Swagger:
-- `http://127.0.0.1:8000/docs`
+- `https://127.0.0.1:8000/docs`
 
 ## Test Commands
 

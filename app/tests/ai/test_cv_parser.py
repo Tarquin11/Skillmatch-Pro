@@ -267,6 +267,61 @@ def test_parse_cv_safe_separates_certifications_projects_and_skills(monkeypatch)
     assert "sql" in skill_set
     assert "aws certified developer associate" not in skill_set
     assert "built an internship matching platform using angular and fastapi" not in skill_set
+    assert payload["project_skill_links"]
+    linked_skills = {str(item.get("skill", "")).lower() for item in payload["project_skill_links"]}
+    assert "angular" in linked_skills
+    assert "fastapi" in linked_skills
+    assert "angular" in payload["extraction_channels"]["project_validated_skill"]
+    assert "fastapi" in payload["extraction_channels"]["project_validated_skill"]
+
+
+def test_parse_cv_safe_context_strength_penalizes_weak_claims(monkeypatch):
+    text = (
+        "SKILLS\n"
+        "- Basic Python familiarity\n"
+        "- SQL\n"
+        "PROJECTS\n"
+        "- Built analytics dashboard using SQL and Python\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["python", "sql"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    by_skill = {
+        str(row.get("skill", "")).lower(): row
+        for row in payload["extracted_skills"]
+        if isinstance(row, dict) and row.get("skill")
+    }
+    assert "python" in by_skill and "sql" in by_skill
+    assert float(by_skill["python"].get("context_strength", 0.0)) <= float(by_skill["sql"].get("context_strength", 1.0))
+    assert isinstance(payload["project_skill_links"], list)
+
+
+def test_parse_cv_safe_project_links_include_evidence_span(monkeypatch):
+    text = (
+        "HANDS-ON PROJECTS\n"
+        "- Implemented payment API using Python and FastAPI for e-commerce platform\n"
+        "SKILLS\n"
+        "- Python\n"
+        "- FastAPI\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["python", "fastapi"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    assert payload["project_skill_links"]
+    link = payload["project_skill_links"][0]
+    assert "evidence_span" in link
+    assert isinstance(link["evidence_span"], str)
+    assert 0.0 <= float(link.get("confidence", 0.0)) <= 1.0
 
 
 def test_extract_sections_detects_hands_on_security_projects_heading():
@@ -320,6 +375,54 @@ def test_parse_cv_safe_keeps_certifications_projects_and_skills_mutually_exclusi
     assert "hands-on security projects" not in skill_set
     assert "frameworks" not in skill_set
     assert "tunisie" not in skill_set
+
+
+def test_parse_cv_safe_project_detail_bullets_stay_under_parent_project(monkeypatch):
+    text = (
+        "Hands-On Security Projects\n"
+        "- Active Directory Penetration Testing Lab (Personal Project) Jan 2025\n"
+        "- Active Directory enumeration, LDAP and SMB reconnaissance, BloodHound attack path analysis\n"
+        "- Lateral movement, persistence techniques, IDS and IPS evasion\n"
+        "SKILLS\n"
+        "- Bloodhound\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["bloodhound"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+
+    assert payload["hands_on_projects"] == [
+        "Active Directory Penetration Testing Lab (Personal Project) Jan 2025",
+    ]
+
+
+def test_parse_cv_safe_stops_certifications_at_technical_skills_boundary(monkeypatch):
+    text = (
+        "CERTIFICATIONS\n"
+        "- eJPT - eLearnSecurity Junior Penetration Tester\n"
+        "Technical Skills\n"
+        "- Cisco SD WAN architecture, vManage and vSmart deployment\n"
+        "- Offensive Security and Active Directory\n"
+        "Hands-On Security Projects\n"
+        "- Active Directory Penetration Testing Lab\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=[],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+
+    certs = {item.lower() for item in payload["certifications"]}
+    assert "ejpt - elearnsecurity junior penetration tester" in certs
+    assert not any("cisco sd wan architecture" in cert for cert in certs)
+    assert not any("offensive security and active directory" in cert for cert in certs)
 
 
 def test_parse_cv_safe_prunes_skill_when_also_classified_as_certification(monkeypatch):

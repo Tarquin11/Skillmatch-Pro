@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import hashlib
+import re
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +74,7 @@ class ModelInferenceService:
     _COLLAPSED_SCORE_MIN_ROWS = int(os.getenv("AI_COLLAPSED_SCORE_MIN_ROWS", "10"))
     _COLLAPSED_SCORE_MAX_UNIQUE = int(os.getenv("AI_COLLAPSED_SCORE_MAX_UNIQUE", "2"))
     _COLLAPSED_SCORE_STDDEV_MAX = float(os.getenv("AI_COLLAPSED_SCORE_STDDEV_MAX", "0.1"))
+    _PROJECT_BONUS_MAX = float(os.getenv("AI_PROJECT_BONUS_MAX", "8.0"))
 
     @staticmethod
     def _bounded_unit(value: Any, default: float = 0.0) -> float:
@@ -605,6 +607,13 @@ class ModelInferenceService:
                         predicted_experience_years=experience_years,
                         min_experience=min_experience,
                     )
+                    score = self._apply_hands_on_projects_bonus(
+                        score_percent=score,
+                        employee=employee,
+                        required_skills=required_skills,
+                        job_title=job_title,
+                        breakdown=breakdown,
+                    )
                     reasons = self._top_reasons(features, breakdown)
                     if guardrail_reason:
                         reasons = [guardrail_reason, *reasons]
@@ -695,6 +704,13 @@ class ModelInferenceService:
                         score_percent=score,
                         predicted_experience_years=experience_years,
                         min_experience=min_experience,
+                    )
+                    score = self._apply_hands_on_projects_bonus(
+                        score_percent=score,
+                        employee=employee,
+                        required_skills=required_skills,
+                        job_title=job_title,
+                        breakdown=breakdown,
                     )
                     reasons = self._top_reasons(features, breakdown)
                     if guardrail_reason:
@@ -909,6 +925,13 @@ class ModelInferenceService:
             score_percent=score,
             predicted_experience_years=experience_years,
             min_experience=min_experience,
+        )
+        score = self._apply_hands_on_projects_bonus(
+            score_percent=score,
+            employee=employee,
+            required_skills=required_skills,
+            job_title=job_title,
+            breakdown=breakdown,
         )
         reasons = self._top_reasons(breakdown, breakdown)
         if guardrail_reason:
@@ -1331,28 +1354,118 @@ class ModelInferenceService:
         return float(ece)
 
     def _model_feature_breakdown(self, matcher: Any, features: dict[str, float]) -> dict[str, float]:
-        vector = np.asarray([float(features.get(c, 0.0)) for c in FEATURE_COLUMNS], dtype=np.float32)
-        pipeline = getattr(matcher, "model", None)
-        if pipeline is None:
-            return {c: 0.0 for c in FEATURE_COLUMNS}
+        # Keep explanation components human-interpretable and directionally stable.
+        skill_overlap = self._bounded_unit(features.get("skill_overlap", 0.0), default=0.0)
+        missing_ratio = self._bounded_unit(features.get("missing_skill_ratio", 0.0), default=0.0)
+        semantic_similarity = self._bounded_unit(features.get("semantic_similarity", 0.0), default=0.0)
+        performance_score = self._bounded_unit(features.get("performance_score", 0.0), default=0.0)
+        engagement_score = self._bounded_unit(features.get("engagement_score", 0.0), default=0.0)
+        satisfaction_score = self._bounded_unit(features.get("satisfaction_score", 0.0), default=0.0)
+        currently_active = self._bounded_unit(features.get("currently_active", 0.0), default=0.0)
 
-        named_steps = getattr(pipeline, "named_steps", {})
-        scaler = named_steps.get("scaler")
-        clf = named_steps.get("clf", pipeline)
+        try:
+            exp_gap_raw = max(0.0, float(features.get("experience_gap", 0.0)))
+        except (TypeError, ValueError):
+            exp_gap_raw = 0.0
+        try:
+            exp_surplus_raw = max(0.0, float(features.get("experience_surplus", 0.0)))
+        except (TypeError, ValueError):
+            exp_surplus_raw = 0.0
 
-        if hasattr(clf, "coef_"):
-            x = vector.reshape(1, -1)
-            if scaler is not None:
-                x = scaler.transform(x)
-            contrib = x[0] * clf.coef_[0]
-            return {c: round(float(v), 6) for c, v in zip(FEATURE_COLUMNS, contrib)}
+        exp_gap = min(exp_gap_raw / 5.0, 1.0)
+        exp_surplus = min(exp_surplus_raw / 5.0, 1.0)
 
-        if hasattr(clf, "feature_importances_"):
-            fi = np.asarray(clf.feature_importances_, dtype=np.float32)
-            contrib = vector * fi
-            return {c: round(float(v), 6) for c, v in zip(FEATURE_COLUMNS, contrib)}
+        return {
+            "skill_overlap": round(skill_overlap, 6),
+            "missing_skill_ratio": round(-missing_ratio, 6),
+            "experience_gap": round(-exp_gap, 6),
+            "experience_surplus": round(exp_surplus, 6),
+            "semantic_similarity": round(semantic_similarity, 6),
+            "performance_score": round(performance_score, 6),
+            "engagement_score": round(engagement_score, 6),
+            "satisfaction_score": round(satisfaction_score, 6),
+            "currently_active": round(0.2 * currently_active, 6),
+        }
 
-        return {c: round(float(features.get(c, 0.0)), 6) for c in FEATURE_COLUMNS}
+    def _extract_employee_projects(self, employee: Any) -> list[str]:
+        raw = getattr(employee, "candidate_projects", None)
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            values = [str(item or "").strip() for item in raw]
+            return [item for item in values if item]
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return []
+            try:
+                decoded = json.loads(text)
+            except Exception:
+                return []
+            if not isinstance(decoded, list):
+                return []
+            values = [str(item or "").strip() for item in decoded]
+            return [item for item in values if item]
+        return []
+
+    def _project_relevance_score(
+        self,
+        *,
+        projects: Sequence[str],
+        required_skills: Sequence[str],
+        job_title: str,
+    ) -> float:
+        if not projects:
+            return 0.0
+        skill_tokens = {
+            normalize_skill_name(s)
+            for s in (required_skills or [])
+            if normalize_skill_name(s)
+        }
+        title_tokens = {
+            tok for tok in normalize_skill_name(job_title).split() if tok
+        }
+        target_tokens = set(skill_tokens) | set(title_tokens)
+        if not target_tokens:
+            return 0.0
+
+        matched_projects = 0
+        keyword_hits: set[str] = set()
+        for project in projects:
+            norm = normalize_skill_name(project)
+            if not norm:
+                continue
+            tokens = {tok for tok in re.split(r"\s+", norm) if tok}
+            overlap = tokens & target_tokens
+            if overlap:
+                matched_projects += 1
+                keyword_hits.update(overlap)
+
+        if matched_projects == 0:
+            return 0.0
+
+        breadth = min(len(keyword_hits) / max(1, len(skill_tokens) or len(target_tokens)), 1.0)
+        volume = min(matched_projects / 4.0, 1.0)
+        return float(max(0.0, min(1.0, (0.65 * breadth) + (0.35 * volume))))
+
+    def _apply_hands_on_projects_bonus(
+        self,
+        *,
+        score_percent: float,
+        employee: Any,
+        required_skills: Sequence[str],
+        job_title: str,
+        breakdown: dict[str, float],
+    ) -> float:
+        projects = self._extract_employee_projects(employee)
+        relevance = self._project_relevance_score(
+            projects=projects,
+            required_skills=required_skills,
+            job_title=job_title,
+        )
+        bonus = relevance * max(0.0, self._PROJECT_BONUS_MAX)
+        breakdown["hands_on_projects"] = round(float(bonus), 6)
+        return float(min(100.0, max(0.0, float(score_percent) + bonus)))
 
     def _top_reasons(self, features: dict[str, float], breakdown: dict[str, float], top_n: int = 3) -> list[str]:
         items = list(breakdown.items())
@@ -1375,6 +1488,8 @@ class ModelInferenceService:
             return f"High semantic similarity ({value:.2f})."
         if feature == "performance_score":
             return f"Good performance history ({value:.2f})."
+        if feature == "hands_on_projects":
+            return f"Relevant hands-on projects added value ({value:.2f})."
         if feature == "currently_active":
             return "Currently active employee profile."
         direction = "positive" if contribution >= 0 else "negative"

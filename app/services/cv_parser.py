@@ -875,6 +875,26 @@ _WEAK_HEDGE_RE = re.compile(
     r"bases\s+en|sensibilisation|decouverte|découverte|vue\s+d"
     r")\b"
 )
+_CONTEXT_POSITIVE_RE = re.compile(
+    r"(?i)\b("
+    r"built|build|implemented|implementation|developed|development|designed|design|"
+    r"deployed|deploy|created|create|delivered|delivery|maintained|maintain|"
+    r"optimized|optimize|led|lead|shipped|architected|automated|automation|"
+    r"contributed|contribution|owned|integrated|integration|"
+    r"concu|concevoir|developpe|developpement|développé|développement|"
+    r"mis\s+en\s+place|realise|réalisé"
+    r")\b"
+)
+_CONTEXT_NEGATIVE_RE = re.compile(
+    r"(?i)\b("
+    r"interested\s+in|interest\s+in|looking\s+to\s+learn|want\s+to\s+learn|"
+    r"learning|learned|beginner|novice|entry\s*level|"
+    r"familiar\s+with|familiarity\s+with|basic|basics|limited|intro(?:duction)?\s+to|"
+    r"awareness\s+of|exposure\s+to|notions?\s+of|"
+    r"interesse\s+par|interesse\s+a|en\s+cours\s+d['\u2019]apprentissage|apprentissage|debutant|débutant|"
+    r"connaissances?\s+de\s+base|notions?\s+de"
+    r")\b"
+)
 
 
 def _span_text_negated(span: str) -> bool:
@@ -903,6 +923,43 @@ def apply_weak_hedge_penalty_to_rows(rows: list[dict[str, Any]], penalty: float 
         except Exception:
             c = 0.0
         r["confidence"] = round(max(0.52, c - penalty), 2)
+
+
+def _context_strength_from_evidence(evidence: list[str]) -> float:
+    if not evidence:
+        return 0.5
+    positives = 0
+    negatives = 0
+    for ev in evidence:
+        norm = _normalize_for_pattern(str(ev or ""))
+        if not norm:
+            continue
+        if _span_text_negated(norm):
+            negatives += 2
+        if _CONTEXT_NEGATIVE_RE.search(norm) or _evidence_weak_hedge(norm):
+            negatives += 1
+        if _CONTEXT_POSITIVE_RE.search(norm):
+            positives += 1
+    total = max(1, positives + negatives)
+    raw = 0.5 + (0.35 * (positives / total)) - (0.45 * (negatives / total))
+    return float(max(0.0, min(1.0, raw)))
+
+
+def apply_context_strength_to_rows(rows: list[dict[str, Any]]) -> None:
+    """Attach context_strength and nudge confidence using local evidence quality."""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        evidence = [str(item) for item in (row.get("evidence") or []) if str(item or "").strip()]
+        strength = _context_strength_from_evidence(evidence)
+        row["context_strength"] = round(strength, 4)
+        try:
+            base = float(row.get("confidence", 0.0))
+        except Exception:
+            base = 0.0
+        delta = (strength - 0.5) * 0.24
+        adjusted = max(0.52, min(0.99, base + delta))
+        row["confidence"] = round(adjusted, 2)
 
 
 def attach_confidence_normalized(rows: list[dict[str, Any]]) -> None:
@@ -2117,6 +2174,28 @@ def _looks_like_project_entry(raw: str) -> bool:
     return True
 
 
+def _looks_like_project_detail_line(raw: str) -> bool:
+    value = _normalize_board_entry(raw)
+    if not value:
+        return False
+    low = _normalize_for_pattern(value)
+    if not low:
+        return False
+    if _PROJECT_ACTION_HINT_RE.search(low):
+        return False
+    if _looks_like_certification_entry(value):
+        return False
+    if _is_project_heading(low) or _is_skill_heading(low):
+        return False
+    if re.fullmatch(r"\d+", low):
+        return False
+    parts = [part.strip() for part in re.split(r"[,\|;/]+", value) if part.strip()]
+    # Treat compact comma-separated capability lists as project details.
+    if len(parts) >= 2 and len(low.split()) <= 20:
+        return True
+    return False
+
+
 def _looks_like_skill_inventory_line(line: str) -> bool:
     normalized = _normalize_text(line)
     if not normalized:
@@ -2191,25 +2270,35 @@ def extract_certifications_from_sections(text: str, max_items: int = 40) -> list
             if len(entries) >= max_items:
                 break
 
-    if len(entries) < max_items:
-        for raw_line in (text or "").splitlines()[:MAX_LINES]:
-            line = raw_line[:MAX_LINE_CHARS].strip()
-            if not line:
-                continue
-            inline_label, inline_tail = _split_inline_labeled_phrase(line)
-            candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
-            normalized = _normalize_board_entry(candidate)
-            if normalized and _looks_like_certification_entry(normalized):
-                entries.append(normalized)
-            if len(entries) >= max_items:
-                break
-
     return _dedupe_board_entries(entries, max_items=max_items)
 
 
 def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> list[str]:
     sections, _weights = _extract_sections(text)
-    entries: list[str] = []
+    projects: list[dict[str, Any]] = []
+
+    def _push_project_title(raw: str) -> None:
+        if len(projects) >= max_items:
+            return
+        title = _normalize_board_entry(raw)
+        if not title:
+            return
+        if projects and _normalize_text(projects[-1].get("title", "")) == _normalize_text(title):
+            return
+        projects.append({"title": title, "details": []})
+
+    def _push_project_detail(raw: str) -> None:
+        if not projects:
+            return
+        detail = _normalize_board_entry(raw)
+        if not detail:
+            return
+        details = projects[-1]["details"]
+        key = _normalize_text(detail)
+        seen = {_normalize_text(str(item or "")) for item in details}
+        if key and key not in seen:
+            details.append(detail)
+
     for section, lines in sections.items():
         section_is_project = _is_project_heading(section)
         if not section_is_project:
@@ -2233,25 +2322,35 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_project_heading(inline_label) else line
             cleaned = _normalize_board_entry(candidate)
-            if not cleaned or not _looks_like_project_entry(cleaned):
+            if not cleaned:
                 continue
-            entries.append(cleaned)
-            if len(entries) >= max_items:
-                return _dedupe_board_entries(entries, max_items=max_items)
+            if _looks_like_project_detail_line(cleaned) and projects:
+                _push_project_detail(cleaned)
+                continue
+            if not _looks_like_project_entry(cleaned):
+                continue
+            _push_project_title(cleaned)
+            if len(projects) >= max_items:
+                return [str(item.get("title", "")).strip() for item in projects if str(item.get("title", "")).strip()]
 
-    if len(entries) < max_items:
+    if len(projects) < max_items:
         scanned_lines = _scan_board_lines_by_heading(text, target="project")
         for line in scanned_lines:
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_project_heading(inline_label) else line
             cleaned = _normalize_board_entry(candidate)
-            if not cleaned or not _looks_like_project_entry(cleaned):
+            if not cleaned:
                 continue
-            entries.append(cleaned)
-            if len(entries) >= max_items:
+            if _looks_like_project_detail_line(cleaned) and projects:
+                _push_project_detail(cleaned)
+                continue
+            if not _looks_like_project_entry(cleaned):
+                continue
+            _push_project_title(cleaned)
+            if len(projects) >= max_items:
                 break
 
-    if len(entries) < max_items:
+    if len(projects) < max_items:
         for raw_line in (text or "").splitlines()[:MAX_LINES]:
             line = raw_line[:MAX_LINE_CHARS].strip()
             if not line:
@@ -2261,17 +2360,22 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
                 continue
             candidate = inline_tail if inline_tail else line
             cleaned = _normalize_board_entry(candidate)
-            if not cleaned or not _looks_like_project_entry(cleaned):
+            if not cleaned:
+                continue
+            if _looks_like_project_detail_line(cleaned) and projects:
+                _push_project_detail(cleaned)
+                continue
+            if not _looks_like_project_entry(cleaned):
                 continue
             # Global fallback is intentionally strict: accept only action-based
             # project evidence to avoid classifying narrative summary lines as projects.
             if not _PROJECT_ACTION_HINT_RE.search(cleaned):
                 continue
-            entries.append(cleaned)
-            if len(entries) >= max_items:
+            _push_project_title(cleaned)
+            if len(projects) >= max_items:
                 break
 
-    return _dedupe_board_entries(entries, max_items=max_items)
+    return [str(item.get("title", "")).strip() for item in projects if str(item.get("title", "")).strip()][:max_items]
 
 
 def extract_context_board_skill_rows(
@@ -2340,6 +2444,73 @@ def extract_context_board_skill_rows(
                     return rows
 
     return rows
+
+
+def build_project_skill_links(
+    *,
+    projects: list[str],
+    extracted_rows: list[dict[str, Any]],
+    max_links: int = 120,
+) -> list[dict[str, Any]]:
+    if not projects or not extracted_rows:
+        return []
+    links: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for project in projects:
+        if len(links) >= max_links:
+            break
+        project_raw = re.sub(r"\s+", " ", str(project or "")).strip()
+        if not project_raw:
+            continue
+        project_norm = _normalize_for_pattern(project_raw)
+        if not project_norm:
+            continue
+        project_tokens = set(_tokenize(project_norm))
+        for row in extracted_rows:
+            if len(links) >= max_links:
+                break
+            if not isinstance(row, dict) or not row.get("skill"):
+                continue
+            skill = canonicalize_skill(str(row.get("skill", "")))
+            if not skill:
+                continue
+            pair_key = (project_norm, _skill_key(skill))
+            if pair_key in seen:
+                continue
+            if not _skill_line_hit(skill, project_norm):
+                continue
+
+            evidence = project_raw[:220]
+            row_evidence = [str(item) for item in (row.get("evidence") or []) if str(item or "").strip()]
+            if row_evidence:
+                evidence = row_evidence[0][:220]
+            try:
+                row_conf = float(row.get("confidence", 0.0))
+            except Exception:
+                row_conf = 0.0
+            try:
+                context_strength = float(row.get("context_strength", 0.5))
+            except Exception:
+                context_strength = 0.5
+
+            skill_tokens = {tok for tok in _tokenize(_normalize_for_pattern(skill)) if tok}
+            overlap = 0.0
+            if skill_tokens:
+                overlap = len(skill_tokens & project_tokens) / max(1, len(skill_tokens))
+            link_conf = max(0.0, min(1.0, (0.65 * row_conf) + (0.25 * context_strength) + (0.10 * overlap)))
+            links.append(
+                {
+                    "project": project_raw,
+                    "skill": skill,
+                    "evidence_span": evidence,
+                    "confidence": round(link_conf, 4),
+                }
+            )
+            seen.add(pair_key)
+
+    links.sort(key=lambda item: (-float(item.get("confidence", 0.0)), str(item.get("skill", ""))))
+    return links[:max_links]
 
 
 def extract_open_vocabulary_skill_rows(
@@ -3576,6 +3747,7 @@ def parse_cv_safe(
             "certification": [],
             "hands_on_project": [],
             "project_text": [],
+            "project_validated_skill": [],
         },
         "preview": "",
         "extracted_skills": [],
@@ -3586,6 +3758,7 @@ def parse_cv_safe(
         "predicted_experience_years": None,
         "certifications": [],
         "hands_on_projects": [],
+        "project_skill_links": [],
     }
 
     if not isinstance(file_bytes, (bytes, bytearray)):
@@ -3779,6 +3952,7 @@ def parse_cv_safe(
             enhanced["confidence_band"] = _confidence_band_for_source(src, conf_val)
             rows_with_evidence.append(enhanced)
         rows = rows_with_evidence
+        apply_context_strength_to_rows(rows)
         rows = _apply_evidence_based_gating(rows)
         apply_weak_hedge_penalty_to_rows(rows)
         attach_confidence_normalized(rows)
@@ -3844,6 +4018,15 @@ def parse_cv_safe(
             {p for p in rejected_project_phrases if p},
             key=lambda x: x.lower(),
         )[:80]
+        project_links = build_project_skill_links(
+            projects=[str(item or "") for item in result.get("hands_on_projects", [])],
+            extracted_rows=rows,
+        )
+        result["project_skill_links"] = project_links
+        result["extraction_channels"]["project_validated_skill"] = sorted(
+            {str(link.get("skill", "")).strip() for link in project_links if str(link.get("skill", "")).strip()},
+            key=lambda x: x.lower(),
+        )
         if not result["skills"]:
             result["warnings"].append("no_skills_detected")
         if budget_hit:
