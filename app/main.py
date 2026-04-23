@@ -14,12 +14,18 @@ from app.api.jobs import router as jobs_router
 from app.api.skills import router as skills_router
 from app.api.department import router as departments_router
 from app.api.ai import router as ai_router
+from app.db.database import ensure_sqlite_legacy_employee_columns
 from app.schemas.common import ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        ensure_sqlite_legacy_employee_columns()
+    except Exception:
+        logger.exception("Failed to apply SQLite schema compatibility patch.")
+
     if settings.AI_MODEL_AUTOLOAD:
         matcher = load_matcher_artifact(settings.AI_MODEL_PATH)
         if matcher is None:

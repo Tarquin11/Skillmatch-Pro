@@ -66,6 +66,12 @@ _PROJECT_HEADING_HINTS = (
     "personal projects",
     "academic projects",
     "professional projects",
+    "hands on projects",
+    "hands-on projects",
+    "hands on security projects",
+    "hands-on security projects",
+    "security projects",
+    "practical projects",
     "hands on",
     "hands-on",
     "portfolio",
@@ -299,6 +305,12 @@ _MULTI_WORD_RESUME_HEADINGS = (
     "personal projects",
     "academic projects",
     "professional projects",
+    "hands on projects",
+    "hands-on projects",
+    "hands on security projects",
+    "hands-on security projects",
+    "security projects",
+    "practical projects",
     "career objective",
     "education and training",
     "additional information",
@@ -517,6 +529,49 @@ def _collapse_letter_spaced_text(value: str) -> str:
     return value.strip()
 
 
+def _looks_like_semantic_section_heading(key: str, words: list[str]) -> bool:
+    """Semantic fallback for common CV headings that are not ALL-CAPS."""
+    if not key or not words:
+        return False
+    if len(words) > 8:
+        return False
+    if re.search(r"[,;|]", key):
+        return False
+
+    # Dedicated blocks are reliable heading anchors.
+    if _is_certification_heading(key) or _is_language_heading(key):
+        return True
+
+    if _is_project_heading(key):
+        if key in {"project", "projects"}:
+            return True
+        if key.endswith(" project") or key.endswith(" projects"):
+            return True
+        if "hands on" in key or "hands-on" in key or "portfolio" in key:
+            return True
+
+    if _is_skill_heading(key):
+        if key in _SINGLE_WORD_RESUME_HEADINGS:
+            return True
+        if key.endswith(" skills") or key.endswith(" tools") or key.endswith(" technologies"):
+            return True
+        if key.endswith(" frameworks") or key.endswith(" stack"):
+            return True
+
+    if _is_experience_heading(key) or _is_education_heading(key):
+        return key in {
+            "experience",
+            "work experience",
+            "professional experience",
+            "employment",
+            "education",
+            "education and training",
+            "formation",
+            "formations",
+        }
+    return False
+
+
 def _matches_resume_section_heading(key: str, words: list[str]) -> bool:
     """True if this short line is a typical CV section title, not a skill/tool bullet."""
     if not key or not words:
@@ -567,6 +622,8 @@ def _matches_resume_section_heading(key: str, words: list[str]) -> bool:
             "relevant",
         ) and len(words) <= 5:
             return True
+    if _looks_like_semantic_section_heading(key, words):
+        return True
     return False
 
 
@@ -1421,6 +1478,84 @@ _CERTIFICATION_MARKER_RE = re.compile(
     r"\b(?:certified|certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|license|licensed)\b",
     re.IGNORECASE,
 )
+_CERTIFICATION_ACRONYM_RE = re.compile(
+    r"\b(?:"
+    r"ccna|ccnp|ccie|cissp|ceh|oscp|oswe|osce|ejpt|ecppt|pnpt|ewpt|"
+    r"security\+|network\+|a\+|az-\d{3}|sc-\d{3}|dp-\d{3}|"
+    r"gpen|gsec|gwapt|crt|crtp|crte|crto|crtl|pjpt|cpts|cbbh"
+    r")\b",
+    re.IGNORECASE,
+)
+_CERTIFICATION_PROVIDER_HINTS = frozenset(
+    {
+        "cisco",
+        "comptia",
+        "isc2",
+        "offsec",
+        "offensive security",
+        "elearnsecurity",
+        "ine security",
+        "sans",
+        "ec council",
+        "microsoft",
+        "aws",
+        "google cloud",
+        "hack the box",
+        "pro labs",
+        "tryhackme",
+        "portswigger",
+        "academy",
+    }
+)
+_CERTIFICATION_ALIAS_HINTS = frozenset(
+    {
+        "ejpt",
+        "ecppt",
+        "ccna",
+        "ccnp",
+        "cissp",
+        "ceh",
+        "oscp",
+        "oswe",
+        "mythical",
+        "puppet",
+    }
+)
+_SKILL_SECTION_NOISE_TERMS = frozenset(
+    {
+        "skills",
+        "technical skills",
+        "core skills",
+        "frameworks",
+        "tools",
+        "technologies",
+        "hands on security projects",
+        "hands-on security projects",
+        "hands on projects",
+        "hands-on projects",
+        "security projects",
+        "projects",
+        "project",
+        "certifications",
+        "certification",
+    }
+)
+_SKILL_LOCATION_NOISE_TERMS = frozenset(
+    {
+        "tunisie",
+        "tunisia",
+        "tunis",
+        "sfax",
+        "sousse",
+        "france",
+        "paris",
+        "morocco",
+        "algeria",
+        "algerie",
+    }
+)
+_SKILL_LEADING_NUMBER_NOISE_RE = re.compile(r"^\d+\s+[a-z].{2,}$")
+_SKILL_CERT_SPLIT_NOISE_RE = re.compile(r"^\d+\s*-\s*[a-z].{2,}$")
 _PROJECT_ACTION_HINT_RE = re.compile(
     r"\b(?:built|build|developed|developing|implemented|created|designed|deployed|led|worked on|contributed|réalisé|realise|realised|developpe|développé)\b",
     re.IGNORECASE,
@@ -1876,6 +2011,112 @@ def _normalize_board_entry(raw: str) -> str:
     return value[:220]
 
 
+def _normalized_heading_from_line(raw_line: str) -> str:
+    line = str(raw_line or "")[:MAX_LINE_CHARS].strip()
+    if not line:
+        return ""
+
+    is_heading, key, _weight = _heading_candidate(line)
+    if is_heading and key:
+        return key
+
+    candidate = line
+    for prefix in BULLET_PREFIXES:
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix) :].strip()
+            break
+    if not candidate:
+        return ""
+    candidate = candidate.strip(":").strip()
+    if not candidate:
+        return ""
+    words = candidate.split()
+    key = _normalize_text(candidate)
+    if _looks_like_semantic_section_heading(key, words):
+        return key
+    return ""
+
+
+def _scan_board_lines_by_heading(text: str, *, target: str, max_lines: int = MAX_LINES) -> list[str]:
+    active: str | None = None
+    out: list[str] = []
+    for raw in (text or "").splitlines()[:max_lines]:
+        line = str(raw or "")[:MAX_LINE_CHARS].strip()
+        if not line:
+            continue
+        heading_key = _normalized_heading_from_line(line)
+        if heading_key:
+            if _is_certification_heading(heading_key):
+                active = "certification"
+            elif _is_project_heading(heading_key):
+                active = "project"
+            else:
+                active = None
+            continue
+        if active == target:
+            out.append(line)
+    return out
+
+
+def _split_certification_candidates(candidate: str) -> list[str]:
+    text = str(candidate or "").strip()
+    if not text:
+        return []
+    # Avoid breaking "CCNA 1, 2, 3 - Cisco Networking Academy" into noisy fragments.
+    if _CERTIFICATION_ACRONYM_RE.search(text) and re.search(r"\b\d\s*,\s*\d", text):
+        return [text]
+    return [part.strip() for part in re.split(r"[|;]+", text) if part and part.strip()]
+
+
+def _looks_like_certification_entry(raw: str) -> bool:
+    value = _normalize_board_entry(raw)
+    if not value:
+        return False
+    low = _normalize_for_pattern(value)
+    if not low:
+        return False
+    if low in _SKILL_SECTION_NOISE_TERMS:
+        return False
+    if _is_project_heading(low):
+        return False
+    if re.fullmatch(r"\d+", low):
+        return False
+    if _SKILL_CERT_SPLIT_NOISE_RE.match(low):
+        return False
+    if _SKILL_LEADING_NUMBER_NOISE_RE.match(low) and not _CERTIFICATION_ACRONYM_RE.search(low):
+        return False
+    if _PROJECT_ACTION_HINT_RE.search(low) and not _CERTIFICATION_MARKER_RE.search(low):
+        return False
+
+    if _CERTIFICATION_MARKER_RE.search(value):
+        return True
+    if _CERTIFICATION_ACRONYM_RE.search(low):
+        return True
+    if any(hint in low for hint in _CERTIFICATION_PROVIDER_HINTS):
+        return True
+    if any(re.search(rf"\b{re.escape(alias)}\b", low) for alias in _CERTIFICATION_ALIAS_HINTS):
+        return True
+    return False
+
+
+def _looks_like_project_entry(raw: str) -> bool:
+    value = _normalize_board_entry(raw)
+    if not value:
+        return False
+    low = _normalize_for_pattern(value)
+    if not low:
+        return False
+    if low in _SKILL_SECTION_NOISE_TERMS:
+        return False
+    if _looks_like_certification_entry(value):
+        return False
+    if _looks_like_skill_inventory_line(value):
+        return False
+    if len(low.split()) < 2 and not _PROJECT_ACTION_HINT_RE.search(low):
+        return False
+    return True
+
+
 def _looks_like_skill_inventory_line(line: str) -> bool:
     normalized = _normalize_text(line)
     if not normalized:
@@ -1914,13 +2155,41 @@ def extract_certifications_from_sections(text: str, max_items: int = 40) -> list
             line = raw_line[:MAX_LINE_CHARS].strip()
             if not line or _is_noise_line(line):
                 continue
+            heading_key = _normalized_heading_from_line(line)
+            if heading_key:
+                if _is_certification_heading(heading_key):
+                    continue
+                # Hard boundary: stop certification ingestion when a new section starts.
+                if (
+                    _is_project_heading(heading_key)
+                    or _is_skill_heading(heading_key)
+                    or _is_experience_heading(heading_key)
+                    or _is_education_heading(heading_key)
+                    or _is_language_heading(heading_key)
+                ):
+                    break
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
-            for part in re.split(r"[,\|;]+", candidate):
+            for part in _split_certification_candidates(candidate):
                 cleaned = _normalize_board_entry(part)
-                if not cleaned:
+                if not cleaned or not _looks_like_certification_entry(cleaned):
                     continue
                 entries.append(cleaned)
+
+    if len(entries) < max_items:
+        scanned_lines = _scan_board_lines_by_heading(text, target="certification")
+        for line in scanned_lines:
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
+            for part in _split_certification_candidates(candidate):
+                cleaned = _normalize_board_entry(part)
+                if not cleaned or not _looks_like_certification_entry(cleaned):
+                    continue
+                entries.append(cleaned)
+                if len(entries) >= max_items:
+                    break
+            if len(entries) >= max_items:
+                break
 
     if len(entries) < max_items:
         for raw_line in (text or "").splitlines()[:MAX_LINES]:
@@ -1930,9 +2199,7 @@ def extract_certifications_from_sections(text: str, max_items: int = 40) -> list
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
             normalized = _normalize_board_entry(candidate)
-            if not normalized:
-                continue
-            if _CERTIFICATION_MARKER_RE.search(normalized):
+            if normalized and _looks_like_certification_entry(normalized):
                 entries.append(normalized)
             if len(entries) >= max_items:
                 break
@@ -1951,18 +2218,38 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
             line = raw_line[:MAX_LINE_CHARS].strip()
             if not line or _is_noise_line(line):
                 continue
+            heading_key = _normalized_heading_from_line(line)
+            if heading_key:
+                if _is_project_heading(heading_key):
+                    continue
+                if (
+                    _is_certification_heading(heading_key)
+                    or _is_skill_heading(heading_key)
+                    or _is_experience_heading(heading_key)
+                    or _is_education_heading(heading_key)
+                    or _is_language_heading(heading_key)
+                ):
+                    break
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_project_heading(inline_label) else line
             cleaned = _normalize_board_entry(candidate)
-            if not cleaned:
-                continue
-            if _looks_like_skill_inventory_line(cleaned):
-                continue
-            if len(cleaned.split()) < 2 and not _PROJECT_ACTION_HINT_RE.search(cleaned):
+            if not cleaned or not _looks_like_project_entry(cleaned):
                 continue
             entries.append(cleaned)
             if len(entries) >= max_items:
                 return _dedupe_board_entries(entries, max_items=max_items)
+
+    if len(entries) < max_items:
+        scanned_lines = _scan_board_lines_by_heading(text, target="project")
+        for line in scanned_lines:
+            inline_label, inline_tail = _split_inline_labeled_phrase(line)
+            candidate = inline_tail if inline_label and _is_project_heading(inline_label) else line
+            cleaned = _normalize_board_entry(candidate)
+            if not cleaned or not _looks_like_project_entry(cleaned):
+                continue
+            entries.append(cleaned)
+            if len(entries) >= max_items:
+                break
 
     if len(entries) < max_items:
         for raw_line in (text or "").splitlines()[:MAX_LINES]:
@@ -1974,8 +2261,10 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
                 continue
             candidate = inline_tail if inline_tail else line
             cleaned = _normalize_board_entry(candidate)
-            if not cleaned or _looks_like_skill_inventory_line(cleaned):
+            if not cleaned or not _looks_like_project_entry(cleaned):
                 continue
+            # Global fallback is intentionally strict: accept only action-based
+            # project evidence to avoid classifying narrative summary lines as projects.
             if not _PROJECT_ACTION_HINT_RE.search(cleaned):
                 continue
             entries.append(cleaned)
@@ -3154,6 +3443,75 @@ def detect_skills(text: str, known_skills: Iterable[str] | None = None) -> list[
         return []
     return [row["skill"] for row in detect_skills_with_confidence(text, known_skills)]
 
+
+def _build_certification_exclusion_keys(certifications: list[str]) -> set[str]:
+    keys: set[str] = set()
+    for raw in certifications or []:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        ckey = _skill_key(text)
+        if ckey:
+            keys.add(ckey)
+        normalized = _normalize_for_pattern(text)
+        if not normalized:
+            continue
+        for match in _CERTIFICATION_ACRONYM_RE.findall(normalized):
+            mkey = _skill_key(match)
+            if mkey:
+                keys.add(mkey)
+        for alias in _CERTIFICATION_ALIAS_HINTS:
+            if re.search(rf"\b{re.escape(alias)}\b", normalized):
+                akey = _skill_key(alias)
+                if akey:
+                    keys.add(akey)
+    return keys
+
+
+def _skill_row_should_be_dropped(
+    row: dict[str, Any],
+    *,
+    certification_keys: set[str],
+) -> bool:
+    raw_skill = str(row.get("skill", "")).strip()
+    if not raw_skill:
+        return True
+    low = _normalize_for_pattern(raw_skill)
+    sk = _skill_key(raw_skill)
+
+    if not low or not sk:
+        return True
+    if low in _SKILL_SECTION_NOISE_TERMS:
+        return True
+    if low in _SKILL_LOCATION_NOISE_TERMS:
+        return True
+    if re.fullmatch(r"\d+", low):
+        return True
+    if _SKILL_LEADING_NUMBER_NOISE_RE.match(low):
+        return True
+    if _SKILL_CERT_SPLIT_NOISE_RE.match(low):
+        return True
+    if _looks_like_semantic_section_heading(low, low.split()):
+        return True
+    if sk in certification_keys:
+        return True
+    if _looks_like_certification_entry(raw_skill):
+        return True
+    return False
+
+
+def _prune_skill_rows_with_context(rows: list[dict[str, Any]], certifications: list[str]) -> list[dict[str, Any]]:
+    cert_keys = _build_certification_exclusion_keys(certifications)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if _skill_row_should_be_dropped(row, certification_keys=cert_keys):
+            continue
+        out.append(row)
+    return out
+
+
 def _apply_evidence_based_gating(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Filter out skills without sufficient evidence, except for strong sources."""
     strong_sources = {"exact", "fuzzy", "synonym"}  
@@ -3427,6 +3785,14 @@ def parse_cv_safe(
         rows, dropped_by_source_gate = apply_post_merge_source_gate(rows, min_confidence=safe_min_conf)
         if dropped_by_source_gate:
             result["warnings"].append(f"post_merge_source_gate_dropped:{dropped_by_source_gate}")
+        pre_prune_count = len(rows)
+        rows = _prune_skill_rows_with_context(
+            rows,
+            certifications=[str(item or "") for item in result.get("certifications", [])],
+        )
+        dropped_by_context = max(0, pre_prune_count - len(rows))
+        if dropped_by_context:
+            result["warnings"].append(f"context_skill_prune_dropped:{dropped_by_context}")
 
         result["extracted_skills"] = rows
         result["skills"] = [

@@ -269,6 +269,80 @@ def test_parse_cv_safe_separates_certifications_projects_and_skills(monkeypatch)
     assert "built an internship matching platform using angular and fastapi" not in skill_set
 
 
+def test_extract_sections_detects_hands_on_security_projects_heading():
+    text = (
+        "CERTIFICATIONS\n"
+        "- eJPT - eLearnSecurity Junior Penetration Tester\n"
+        "Hands-On Security Projects\n"
+        "- Active Directory Penetration Testing Lab\n"
+    )
+    sections, _weights = _extract_sections(text)
+    assert "certifications" in sections
+    assert "hands-on security projects" in sections
+    assert all("active directory penetration testing lab" not in line.lower() for line in sections["certifications"])
+
+
+def test_parse_cv_safe_keeps_certifications_projects_and_skills_mutually_exclusive(monkeypatch):
+    text = (
+        "CERTIFICATIONS\n"
+        "- eCPPT - eLearnSecurity Certified Professional Penetration Tester\n"
+        "- eJPT - eLearnSecurity Junior Penetration Tester\n"
+        "- Hack The Box Pro Labs: Puppet\n"
+        "Hands-On Security Projects\n"
+        "- Active Directory Penetration Testing Lab (Personal Project) Jan 2025\n"
+        "- LDAP and SMB reconnaissance\n"
+        "SKILLS\n"
+        "- Bloodhound\n"
+        "- Impacket\n"
+        "- Tunisie\n"
+        "- Frameworks\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["bloodhound", "impacket", "ejpt", "ecppt"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+
+    assert payload["certifications"] == [
+        "eCPPT - eLearnSecurity Certified Professional Penetration Tester",
+        "eJPT - eLearnSecurity Junior Penetration Tester",
+        "Hack The Box Pro Labs: Puppet",
+    ]
+    assert "Active Directory Penetration Testing Lab (Personal Project) Jan 2025" in payload["hands_on_projects"]
+    skill_set = {str(skill).lower() for skill in payload["skills"]}
+    assert "bloodhound" in skill_set
+    assert "impacket" in skill_set
+    assert "ejpt" not in skill_set
+    assert "ecppt" not in skill_set
+    assert "hands-on security projects" not in skill_set
+    assert "frameworks" not in skill_set
+    assert "tunisie" not in skill_set
+
+
+def test_parse_cv_safe_prunes_skill_when_also_classified_as_certification(monkeypatch):
+    text = (
+        "CERTIFICATIONS\n"
+        "- eJPT - eLearnSecurity Junior Penetration Tester\n"
+        "SKILLS\n"
+        "- eJPT\n"
+        "- Python\n"
+    )
+    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
+    payload = parse_cv_safe(
+        file_bytes=b"%PDF-1.4\n",
+        filename="cv.pdf",
+        known_skills=["ejpt", "python"],
+        min_confidence=0.6,
+        use_semantic=False,
+    )
+    skill_set = {str(skill).lower() for skill in payload["skills"]}
+    assert "python" in skill_set
+    assert "ejpt" not in skill_set
+
+
 def test_open_vocab_noise_rejects_including_phrases():
     assert cv_parser._open_vocab_looks_like_noise_sentence("including html5, php oop, javascript, css, sql")
     assert cv_parser._open_vocab_looks_like_noise_sentence("experience in web application development")
