@@ -5,6 +5,7 @@ from app.schemas.common import StrictBaseModel
 class CandidateSkillExtraction(StrictBaseModel):
     skill: str
     confidence: float = Field(ge=0.0, le=1.0)
+    context_strength: float = Field(default=0.5, ge=0.0, le=1.0)
     confidence_normalized: float = Field(default=1.0, ge=0.0, le=1.0)
     source: str
     source_label: str | None = None

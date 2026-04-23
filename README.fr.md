@@ -161,6 +161,12 @@ python -m app.scripts.evaluate_cv_extraction --labels-jsonl data/labels/cv_extra
 python -m app.scripts.evaluate_cv_robustness --labels-jsonl data/labels/cv_extraction_hf_labels.jsonl --out artifacts/cv_robustness_report.json
 ```
 
+Exécuter les gates de qualité sur un jeu de validation fixe (Precision@1/Recall/F1 techniques, FP semantic augment, exclusivité certifications/projets, ECE):
+
+```powershell
+python -m app.scripts.evaluate_cv_quality_gates --gold-jsonl artifacts/gold/cv_quality_validation.jsonl --out artifacts/reports/cv_quality_gates_report.json
+```
+
 ## Docker
 
 Build:
@@ -180,4 +186,3 @@ docker run --rm -p 8000:8000 --env-file .env skillmatch-pro-back
 - Les routes legacy non versionnées et les routes `/api/v1` sont toutes les deux actives.
 - `README.fr.md` est prévu pour le suivi avec l’encadrant.
 - `AI_retraining.md` contient le runbook opérationnel de réentraînement.
-

@@ -1,11 +1,14 @@
 import io
+import json
 import re
 import math
 import time
+import os
 import unicodedata
 import logging
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any, Callable, Iterable
 import numpy as np
 import pdfplumber
@@ -337,6 +340,55 @@ MAX_SECTION_PHRASES = 1_200
 MAX_PHRASE_CHARS = 180
 MAX_KNOWN_SKILLS = 5_000
 DEFAULT_SKILL_TIME_BUDGET_SECONDS = 0.75
+
+
+def _env_float(name: str, default: float, *, min_value: float | None = None, max_value: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        value = float(default)
+    else:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = float(default)
+    if min_value is not None:
+        value = max(float(min_value), value)
+    if max_value is not None:
+        value = min(float(max_value), value)
+    return float(value)
+
+
+def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        value = int(default)
+    else:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = int(default)
+    if min_value is not None:
+        value = max(int(min_value), value)
+    if max_value is not None:
+        value = min(int(max_value), value)
+    return int(value)
+
+
+def _env_csv_lower_set(name: str, default_csv: str) -> set[str]:
+    raw = os.getenv(name)
+    source = raw if raw is not None and str(raw).strip() else default_csv
+    out: set[str] = set()
+    for token in str(source).split(","):
+        cleaned = canonicalize_skill(token).strip().lower()
+        if cleaned:
+            out.add(cleaned)
+    return out
+
+
+_DEFAULT_SEMANTIC_AUGMENT_CALIBRATION_PATH = (
+    Path(__file__).resolve().parents[1] / "config" / "semantic_augment_calibration.json"
+)
+_SEMANTIC_AUGMENT_CALIBRATION_CACHE: dict[str, dict[str, Any]] | None = None
 
 
 def _is_skill_heading(section_key: str) -> bool:
@@ -855,9 +907,57 @@ def _extract_hf_ner_spans(text: str, max_spans: int = 200) -> list[str]:
             break
     return out
 
-SEMANTIC_AUGMENT_MIN_SIMILARITY = 0.80
-SEMANTIC_AUGMENT_MAX_SPANS = 72
-SEMANTIC_AUGMENT_TOP_CANDIDATES = 3
+SEMANTIC_AUGMENT_MIN_SIMILARITY = _env_float(
+    "CV_PARSER_SEMANTIC_AUGMENT_MIN_SIMILARITY",
+    0.80,
+    min_value=0.30,
+    max_value=0.98,
+)
+SEMANTIC_AUGMENT_MAX_SPANS = _env_int(
+    "CV_PARSER_SEMANTIC_AUGMENT_MAX_SPANS",
+    72,
+    min_value=8,
+    max_value=250,
+)
+SEMANTIC_AUGMENT_TOP_CANDIDATES = _env_int(
+    "CV_PARSER_SEMANTIC_AUGMENT_TOP_CANDIDATES",
+    5,
+    min_value=1,
+    max_value=25,
+)
+SEMANTIC_AUGMENT_MIN_LEXICAL_OVERLAP = _env_float(
+    "CV_PARSER_SEMANTIC_AUGMENT_MIN_LEXICAL_OVERLAP",
+    0.08,
+    min_value=0.0,
+    max_value=1.0,
+)
+SEMANTIC_AUGMENT_AMBIGUOUS_MIN_SIM_BONUS = _env_float(
+    "CV_PARSER_SEMANTIC_AUGMENT_AMBIGUOUS_MIN_SIM_BONUS",
+    0.05,
+    min_value=0.0,
+    max_value=0.3,
+)
+SEMANTIC_AUGMENT_AMBIGUOUS_MIN_LEXICAL = _env_float(
+    "CV_PARSER_SEMANTIC_AUGMENT_AMBIGUOUS_MIN_LEXICAL",
+    0.45,
+    min_value=0.0,
+    max_value=1.0,
+)
+SEMANTIC_AUGMENT_BASE_THRESHOLD = _env_float(
+    "CV_PARSER_SEMANTIC_AUGMENT_BASE_THRESHOLD",
+    0.69,
+    min_value=0.50,
+    max_value=0.99,
+)
+SEMANTIC_AUGMENT_AMBIGUOUS_BASE_THRESHOLD = _env_float(
+    "CV_PARSER_SEMANTIC_AUGMENT_AMBIGUOUS_BASE_THRESHOLD",
+    0.78,
+    min_value=0.55,
+    max_value=0.995,
+)
+SEMANTIC_AUGMENT_HARD_AMBIGUITY = frozenset(
+    _env_csv_lower_set("CV_PARSER_SEMANTIC_AUGMENT_HARD_AMBIGUITY", "go,r,c,ai")
+)
 _SPAN_NEGATION_RE = re.compile(
     r"(?i)"
     r"(?:\bno\b|\bnot\b|\bnever\b|\bwithout\b|\blacking\b|\black\s+of\b|\bneither\b|\bnor\b|"
@@ -1027,37 +1127,202 @@ def apply_post_merge_source_gate(rows: list[dict[str, Any]], min_confidence: flo
     return kept, dropped
 
 
-def _spans_for_semantic_augment(text: str) -> list[str]:
-    """Non-overlapping substantive lines; each span is evidence for any suggestion."""
-    spans: list[str] = []
+def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge_dict(dict(out[key]), value)
+        else:
+            out[key] = value
+    return out
+
+
+def _load_semantic_augment_calibration_config() -> dict[str, dict[str, Any]]:
+    global _SEMANTIC_AUGMENT_CALIBRATION_CACHE
+    if _SEMANTIC_AUGMENT_CALIBRATION_CACHE is not None:
+        return _SEMANTIC_AUGMENT_CALIBRATION_CACHE
+
+    defaults: dict[str, dict[str, Any]] = {
+        "semantic_augment": {
+            "method": "platt",
+            "a": 3.2,
+            "b": -1.6,
+            "threshold": SEMANTIC_AUGMENT_BASE_THRESHOLD,
+        },
+        "semantic_augment_ambiguous": {
+            "method": "isotonic",
+            "points": [
+                [0.0, 0.0],
+                [0.55, 0.48],
+                [0.70, 0.62],
+                [0.80, 0.78],
+                [1.0, 0.94],
+            ],
+            "threshold": SEMANTIC_AUGMENT_AMBIGUOUS_BASE_THRESHOLD,
+        },
+    }
+
+    env_path = (os.getenv("CV_PARSER_SEMANTIC_AUGMENT_CALIBRATION_PATH") or "").strip()
+    candidate_path = Path(env_path).expanduser() if env_path else _DEFAULT_SEMANTIC_AUGMENT_CALIBRATION_PATH
+    if candidate_path.exists():
+        try:
+            payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                normalized: dict[str, dict[str, Any]] = {}
+                for source_name, source_cfg in payload.items():
+                    if isinstance(source_cfg, dict):
+                        normalized[str(source_name)] = dict(source_cfg)
+                defaults = _deep_merge_dict(defaults, normalized)
+        except Exception:
+            logger.warning("Failed to load semantic augment calibration config: %s", candidate_path)
+
+    _SEMANTIC_AUGMENT_CALIBRATION_CACHE = defaults
+    return _SEMANTIC_AUGMENT_CALIBRATION_CACHE
+
+
+def _apply_isotonic_unit_interval(raw: float, points: Any) -> float:
+    x = max(0.0, min(1.0, float(raw)))
+    clean: list[tuple[float, float]] = []
+    for item in points or []:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        try:
+            px = max(0.0, min(1.0, float(item[0])))
+            py = max(0.0, min(1.0, float(item[1])))
+        except Exception:
+            continue
+        clean.append((px, py))
+    if not clean:
+        return x
+    clean.sort(key=lambda pair: pair[0])
+    isotonic: list[tuple[float, float]] = []
+    for px, py in clean:
+        if isotonic and px <= isotonic[-1][0]:
+            continue
+        if isotonic and py < isotonic[-1][1]:
+            py = isotonic[-1][1]
+        isotonic.append((px, py))
+    if not isotonic:
+        return x
+    if x <= isotonic[0][0]:
+        return isotonic[0][1]
+    if x >= isotonic[-1][0]:
+        return isotonic[-1][1]
+    for i in range(1, len(isotonic)):
+        x0, y0 = isotonic[i - 1]
+        x1, y1 = isotonic[i]
+        if x0 <= x <= x1:
+            if abs(x1 - x0) <= 1e-9:
+                return y1
+            t = (x - x0) / (x1 - x0)
+            return y0 + (y1 - y0) * t
+    return isotonic[-1][1]
+
+
+def _calibrate_semantic_augment_score(raw: float, source_key: str) -> float:
+    x = max(0.001, min(0.999, float(raw)))
+    cfg = _load_semantic_augment_calibration_config().get(source_key)
+    if not isinstance(cfg, dict):
+        cfg = _load_semantic_augment_calibration_config().get("semantic_augment", {})
+    method = str(cfg.get("method", "platt")).strip().lower()
+    if method == "isotonic":
+        return max(0.01, min(0.99, _apply_isotonic_unit_interval(x, cfg.get("points"))))
+    if method == "global_platt":
+        a, b, on = load_platt_params()
+        return apply_platt_on_unit_interval(x, a, b) if on else x
+    try:
+        a = float(cfg.get("a", 1.0))
+        b = float(cfg.get("b", 0.0))
+    except Exception:
+        return x
+    return max(0.01, min(0.99, apply_platt_on_unit_interval(x, a, b)))
+
+
+def _semantic_augment_threshold_for_source(source_key: str, min_confidence: float) -> float:
+    cfg = _load_semantic_augment_calibration_config().get(source_key)
+    if not isinstance(cfg, dict):
+        cfg = _load_semantic_augment_calibration_config().get("semantic_augment", {})
+    try:
+        calibrated_floor = float(cfg.get("threshold", SEMANTIC_AUGMENT_BASE_THRESHOLD))
+    except Exception:
+        calibrated_floor = SEMANTIC_AUGMENT_BASE_THRESHOLD
+    return max(float(min_confidence), max(0.01, min(0.995, calibrated_floor)))
+
+
+def _semantic_augment_token_set(value: str) -> set[str]:
+    return {tok for tok in _tokenize(_normalize_for_pattern(value)) if tok and not tok.isdigit()}
+
+
+def _semantic_augment_lexical_overlap(span: str, skill_display: str) -> float:
+    span_tokens = _semantic_augment_token_set(span)
+    skill_tokens = _semantic_augment_token_set(skill_display)
+    if not span_tokens or not skill_tokens:
+        return 0.0
+    return len(span_tokens & skill_tokens) / max(1, len(skill_tokens))
+
+
+def _semantic_augment_acronym_match(span: str, skill_display: str) -> bool:
+    span_tokens = _semantic_augment_token_set(span)
+    if not span_tokens:
+        return False
+    raw_acronym = _acronym(skill_display).strip().lower()
+    canonical_acronym = _acronym(canonicalize_skill(skill_display)).strip().lower()
+    candidates = {raw_acronym, canonical_acronym}
+    for candidate in candidates:
+        if len(candidate) >= 2 and candidate in span_tokens:
+            return True
+    return False
+
+
+def _semantic_augment_section_score(section_weight: float) -> float:
+    return max(0.0, min(1.0, (float(section_weight) - 0.75) / 0.35))
+
+
+def _semantic_augment_rerank_score(
+    sim: float,
+    lexical_overlap: float,
+    acronym_match: bool,
+    section_weight: float,
+) -> float:
+    sim_score = max(0.0, min(1.0, float(sim)))
+    lexical_score = max(0.0, min(1.0, float(lexical_overlap)))
+    acronym_bonus = 1.0 if acronym_match else 0.0
+    section_score = _semantic_augment_section_score(section_weight)
+    raw = (0.71 * sim_score) + (0.18 * lexical_score) + (0.07 * acronym_bonus) + (0.04 * section_score)
+    return max(0.0, min(1.0, raw))
+
+
+def _spans_for_semantic_augment(
+    *,
+    sections: dict[str, list[str]],
+) -> list[tuple[str, str]]:
+    """Non-overlapping substantive lines with section labels for reranking."""
+    spans: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for raw in (text or "").splitlines()[:MAX_LINES]:
-        line = raw.strip()
-        if not line or _is_noise_line(line):
+    for section, lines in sections.items():
+        if _is_language_heading(section):
             continue
-        for p in BULLET_PREFIXES:
-            if line.startswith(p):
-                line = line[len(p) :].strip()
-                break
-        if len(line) < 12:
+        if _is_education_heading(section):
             continue
-        line = re.sub(r"\s+", " ", line)[:240]
-        key = _normalize_text(line)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        spans.append(line)
-        if len(spans) >= SEMANTIC_AUGMENT_MAX_SPANS:
-            break
+        for raw in lines:
+            line = raw.strip()
+            if not line or _is_noise_line(line):
+                continue
+            for p in BULLET_PREFIXES:
+                if line.startswith(p):
+                    line = line[len(p) :].strip()
+                    break
+            if len(line) < 12:
+                continue
+            line = re.sub(r"\s+", " ", line)[:240]
+            key = _normalize_text(line)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            spans.append((line, section))
+            if len(spans) >= SEMANTIC_AUGMENT_MAX_SPANS:
+                return spans
     return spans
-
-
-def _similarity_to_augment_base_confidence(sim: float) -> float:
-    """Keep suggested scores below strong rule-based hits (augmentation, not replacement)."""
-    lo = SEMANTIC_AUGMENT_MIN_SIMILARITY
-    t = (float(sim) - lo) / max(1e-6, 1.0 - lo)
-    t = max(0.0, min(1.0, t))
-    return 0.60 + 0.22 * t
 
 
 def augment_skills_semantically_gated(
@@ -1075,8 +1340,11 @@ def augment_skills_semantically_gated(
     similarity is high, the skill is not already detected, and a text span exists
     as evidence. Does not modify or replace rule/pattern rows.
     """
-    spans = _spans_for_semantic_augment(text)
-    if not spans or not known_skills:
+    if not known_skills:
+        return []
+    sections, section_weights = _extract_sections(text)
+    span_items = _spans_for_semantic_augment(sections=sections)
+    if not span_items:
         return []
     skill_vectors, skill_names = _get_skill_embeddings(known_skills)
     if skill_vectors is None or not skill_names:
@@ -1091,55 +1359,95 @@ def augment_skills_semantically_gated(
     def _over_time() -> bool:
         return deadline is not None and time.perf_counter() >= deadline
 
+    phrases = [phrase for phrase, _section in span_items]
     try:
-        span_vectors = np.asarray(embedder.generate_embeddings(spans), dtype=np.float32)
+        span_vectors = np.asarray(embedder.generate_embeddings(phrases), dtype=np.float32)
     except Exception:
         return []
     if span_vectors.size == 0:
         return []
 
     sims = span_vectors @ skill_vectors.T
-    best_for_skill: dict[str, tuple[float, str, str]] = {}
+    best_for_skill: dict[str, tuple[float, float, str, str, str]] = {}
 
-    for i, span in enumerate(spans):
+    for i, (span, section) in enumerate(span_items):
         if _over_time():
             break
+        if _span_text_negated(span):
+            continue
         row = sims[i]
         n_sk = int(row.shape[0])
+        if n_sk <= 0:
+            continue
         kk = min(SEMANTIC_AUGMENT_TOP_CANDIDATES, n_sk)
+        if kk <= 0:
+            continue
         idxs = np.argpartition(-row, kk - 1)[:kk]
         idxs = sorted([int(j) for j in idxs], key=lambda j: -float(row[j]))
+        section_weight = max(0.75, min(1.12, float(section_weights.get(section, 0.90))))
+        section_slug = re.sub(r"[^a-z0-9]+", "_", _normalize_text(section)[:40]).strip("_") or "section"
+        section_is_skillish = _is_skill_heading(section) or _is_experience_heading(section) or _is_project_heading(section)
+        weak_context = bool(_CONTEXT_NEGATIVE_RE.search(_normalize_for_pattern(span)))
         for j in idxs:
             sim = float(row[j])
             if sim < min_similarity:
-                continue
-            if _span_text_negated(span):
                 continue
             display = skill_names[j]
             canonical = canonicalize_skill(display)
             sk = _skill_key(canonical)
             if not sk or sk in existing_skill_keys:
                 continue
-            prev = best_for_skill.get(sk)
-            if prev is None or sim > prev[0]:
-                best_for_skill[sk] = (sim, span, canonical)
+            lexical_overlap = _semantic_augment_lexical_overlap(span, display)
+            acronym_match = _semantic_augment_acronym_match(span, display)
+            if lexical_overlap < SEMANTIC_AUGMENT_MIN_LEXICAL_OVERLAP and not acronym_match:
+                continue
 
-    ranked = sorted(best_for_skill.values(), key=lambda t: -t[0])[:max_additions]
+            is_hard_ambiguous = canonical in SEMANTIC_AUGMENT_HARD_AMBIGUITY
+            if is_hard_ambiguous:
+                if sim < (min_similarity + SEMANTIC_AUGMENT_AMBIGUOUS_MIN_SIM_BONUS):
+                    continue
+                if weak_context:
+                    continue
+                if not section_is_skillish:
+                    continue
+                if lexical_overlap < SEMANTIC_AUGMENT_AMBIGUOUS_MIN_LEXICAL and not acronym_match:
+                    continue
+
+            rerank_raw = _semantic_augment_rerank_score(
+                sim=sim,
+                lexical_overlap=lexical_overlap,
+                acronym_match=acronym_match,
+                section_weight=section_weight,
+            )
+            source_key = "semantic_augment_ambiguous" if is_hard_ambiguous else "semantic_augment"
+            calibrated = _calibrate_semantic_augment_score(rerank_raw, source_key=source_key)
+            threshold = _semantic_augment_threshold_for_source(source_key=source_key, min_confidence=min_confidence)
+            if calibrated < threshold:
+                continue
+
+            prev = best_for_skill.get(sk)
+            if prev is None or calibrated > prev[0] or (abs(calibrated - prev[0]) <= 1e-6 and sim > prev[1]):
+                best_for_skill[sk] = (
+                    calibrated,
+                    sim,
+                    span,
+                    canonical,
+                    f"semantic_augment:{section_slug}",
+                )
+
+    ranked = sorted(best_for_skill.values(), key=lambda t: (-t[0], -t[1]))[:max_additions]
     out: list[dict[str, Any]] = []
-    for sim, span, canonical in ranked:
+    for calibrated, _sim, span, canonical, source in ranked:
         if _span_text_negated(span):
             continue
         ev_span = re.sub(r"\s+", " ", span).strip()
         if len(ev_span) > 180:
             ev_span = ev_span[:177] + "..."
-        conf = _similarity_to_augment_base_confidence(sim)
-        if conf < min_confidence:
-            continue
         out.append(
             {
                 "skill": canonical,
-                "confidence": round(conf, 2),
-                "source": "semantic_augment",
+                "confidence": round(calibrated, 2),
+                "source": source,
                 "evidence": [ev_span],
                 "_conf_channels": {"semantic_augment"},
             }
@@ -1173,6 +1481,7 @@ def _calibrate_confidence(raw_conf : float, source: str, section_weight: float) 
         "synonym": 0.98,  
         "fuzzy": 0.90,
         "semantic": 0.85,  
+        "semantic_augment": 0.84,
         "ner_span": 0.94,
         "legacy": 0.88,
     }.get(source_key, 0.92)
@@ -3105,7 +3414,7 @@ def enrich_skill_confidence_rows(
             source.startswith("exact")
             or source.startswith("fuzzy")
             or source == "synonym"
-            or source.startswith("semantic")
+            or source.startswith("semantic:")
             or source.startswith("ner_span")
         )
         if cal_on and calibratable_source:

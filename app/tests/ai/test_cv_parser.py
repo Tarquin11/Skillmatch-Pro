@@ -1,4 +1,5 @@
 import re
+import numpy as np
 
 from app.services import cv_parser
 from app.services.cv_parser import (
@@ -944,3 +945,71 @@ def test_semantic_augment_not_called_when_disabled(monkeypatch):
         use_semantic_augment=False,
     )
     assert called["n"] == 0
+
+
+def test_semantic_augment_topk_rerank_uses_ambiguity_guardrails(monkeypatch):
+    class _DummyEmbedder:
+        def generate_embeddings(self, texts):
+            assert len(texts) == 1
+            return [[1.0, 0.0]]
+
+    monkeypatch.setattr(cv_parser, "SEMANTIC_AUGMENT_HARD_AMBIGUITY", frozenset({"go", "r", "c", "ai"}))
+    monkeypatch.setattr(
+        cv_parser,
+        "_spans_for_semantic_augment",
+        lambda **_kwargs: [("Built backend services in Golang for internal APIs", "experience")],
+    )
+    monkeypatch.setattr(
+        cv_parser,
+        "_get_skill_embeddings",
+        lambda _known: (
+            np.asarray(
+                [
+                    [0.995, 0.005],  # go (highest semantic similarity but ambiguous)
+                    [0.930, 0.070],  # golang (kept after rerank/guardrails)
+                    [0.000, 1.000],  # unrelated
+                ],
+                dtype=np.float32,
+            ),
+            ["go", "golang", "python"],
+        ),
+    )
+    monkeypatch.setattr(cv_parser, "_get_embedder", lambda: _DummyEmbedder())
+
+    rows = cv_parser.augment_skills_semantically_gated(
+        text="EXPERIENCE\n- Built backend services in Golang for internal APIs\n",
+        known_skills=["go", "golang", "python"],
+        existing_skill_keys=set(),
+        min_confidence=0.60,
+    )
+    names = {str(row.get("skill", "")) for row in rows}
+    assert "golang" in names
+    assert "go" not in names
+
+
+def test_semantic_augment_drops_hard_ambiguity_on_weak_context(monkeypatch):
+    class _DummyEmbedder:
+        def generate_embeddings(self, texts):
+            assert len(texts) == 1
+            return [[1.0, 0.0]]
+
+    monkeypatch.setattr(cv_parser, "SEMANTIC_AUGMENT_HARD_AMBIGUITY", frozenset({"go", "r", "c", "ai"}))
+    monkeypatch.setattr(
+        cv_parser,
+        "_spans_for_semantic_augment",
+        lambda **_kwargs: [("Interested in AI and looking to learn more", "skills")],
+    )
+    monkeypatch.setattr(
+        cv_parser,
+        "_get_skill_embeddings",
+        lambda _known: (np.asarray([[1.0, 0.0]], dtype=np.float32), ["ai"]),
+    )
+    monkeypatch.setattr(cv_parser, "_get_embedder", lambda: _DummyEmbedder())
+
+    rows = cv_parser.augment_skills_semantically_gated(
+        text="SKILLS\n- Interested in AI and looking to learn more\n",
+        known_skills=["ai"],
+        existing_skill_keys=set(),
+        min_confidence=0.55,
+    )
+    assert rows == []

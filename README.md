@@ -161,6 +161,12 @@ Evaluate parser robustness KPIs:
 python -m app.scripts.evaluate_cv_robustness --labels-jsonl data/labels/cv_extraction_hf_labels.jsonl --out artifacts/cv_robustness_report.json
 ```
 
+Run fixed validation quality gates (technical precision/recall/F1, semantic augment FP rate, boards exclusivity, ECE):
+
+```powershell
+python -m app.scripts.evaluate_cv_quality_gates --gold-jsonl artifacts/gold/cv_quality_validation.jsonl --out artifacts/reports/cv_quality_gates_report.json
+```
+
 ## Docker
 
 Build:
@@ -180,4 +186,3 @@ docker run --rm -p 8000:8000 --env-file .env skillmatch-pro-back
 - Legacy unversioned routes and `/api/v1` namespaced routes are both enabled.
 - `README.fr.md` contains the French version for supervisor/academic reporting.
 - `AI_retraining.md` contains the operational retraining runbook.
-

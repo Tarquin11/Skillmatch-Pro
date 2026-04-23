@@ -1,0 +1,19 @@
+{
+  "semantic_augment": {
+    "method": "platt",
+    "a": 3.2,
+    "b": -1.6,
+    "threshold": 0.69
+  },
+  "semantic_augment_ambiguous": {
+    "method": "isotonic",
+    "points": [
+      [0.0, 0.0],
+      [0.55, 0.48],
+      [0.7, 0.62],
+      [0.8, 0.78],
+      [1.0, 0.94]
+    ],
+    "threshold": 0.78
+  }
+}
