@@ -41,6 +41,17 @@ def ensure_sqlite_legacy_employee_columns() -> None:
     logger.info("Applied SQLite employee schema compatibility patch: %s", ", ".join(statements))
 
 
+def ensure_runtime_support_tables() -> None:
+    """Create lightweight support tables needed by newer local features.
+
+    This keeps local SQLite environments working even when Alembic migrations
+    have not been applied yet.
+    """
+    from app.models.active_learning import EntityReview, UnknownEntity
+
+    Base.metadata.create_all(bind=engine, tables=[UnknownEntity.__table__, EntityReview.__table__])
+
+
 def get_db():
     db = SessionLocal()
     try:

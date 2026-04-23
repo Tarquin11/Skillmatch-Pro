@@ -5,6 +5,7 @@ from app.models.employee import Employee
 from app.models.skill import Skill
 from app.models.Employee_skill import EmployeeSkill
 from app.models.refresh_token import RefreshToken
+from app.models.active_learning import UnknownEntity, EntityReview
 
 __all__ = [
     "Base",
@@ -15,4 +16,6 @@ __all__ = [
     "Skill",
     "EmployeeSkill",
     "RefreshToken",
+    "UnknownEntity",
+    "EntityReview",
 ]

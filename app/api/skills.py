@@ -49,12 +49,12 @@ def get_skill(skill_id: int, response: Response, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=SkillOut, status_code=status.HTTP_201_CREATED)
-def create_skill(payload: SkillCreate, db: Session = Depends(get_db), _current_user: User = Depends(require_policy(Policy.SKILL_WRITE))):
+def create_skill(payload: SkillCreate, db: Session = Depends(get_db), current_user: User = Depends(require_policy(Policy.SKILL_WRITE))):
     existing = db.query(Skill).filter(Skill.name == payload.name).first()
     if existing:
         raise HTTPException(status_code=409, detail={"code": "skill_already_exists", "message": "Skill already exists"})
 
-    skill = Skill(name=payload.name)
+    skill = Skill(name=payload.name, created_by=int(current_user.id))
     db.add(skill)
     db.commit()
     db.refresh(skill)

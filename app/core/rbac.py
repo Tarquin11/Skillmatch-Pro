@@ -7,6 +7,7 @@ class Policy:
     SKILL_WRITE: Final[str] = "skill:write"
     EMPLOYEE_SKILL_WRITE: Final[str] = "employee_skill:write"
     DEPARTMENT_WRITE: Final[str] = "department:write"
+    LEARNING_REVIEW: Final[str] = "learning:review"
 
 POLICY_TO_ROLES: dict[str, frozenset[str]] = {
     Policy.EMPLOYEE_WRITE: frozenset({"admin"}),
@@ -15,6 +16,7 @@ POLICY_TO_ROLES: dict[str, frozenset[str]] = {
     Policy.SKILL_WRITE: frozenset({"admin"}),
     Policy.EMPLOYEE_SKILL_WRITE: frozenset({"admin"}),
     Policy.DEPARTMENT_WRITE: frozenset({"admin"}),
+    Policy.LEARNING_REVIEW: frozenset({"admin"}),
 }
 
 def roles_for_policy(policy: str) -> frozenset[str]:

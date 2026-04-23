@@ -14,7 +14,8 @@ from app.api.jobs import router as jobs_router
 from app.api.skills import router as skills_router
 from app.api.department import router as departments_router
 from app.api.ai import router as ai_router
-from app.db.database import ensure_sqlite_legacy_employee_columns
+from app.api.learning import router as learning_router
+from app.db.database import ensure_runtime_support_tables, ensure_sqlite_legacy_employee_columns
 from app.schemas.common import ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     try:
         ensure_sqlite_legacy_employee_columns()
+        ensure_runtime_support_tables()
     except Exception:
-        logger.exception("Failed to apply SQLite schema compatibility patch.")
+        logger.exception("Failed to apply local schema compatibility patch.")
 
     if settings.AI_MODEL_AUTOLOAD:
         matcher = load_matcher_artifact(settings.AI_MODEL_PATH)
@@ -62,11 +64,9 @@ def _include_api_routes(target: FastAPI | APIRouter) -> None:
     target.include_router(departments_router, prefix="/departments", tags=["departments"])
     target.include_router(departments_router, prefix="/departements", tags=["departements"])
     target.include_router(ai_router)
-
-# Legacy unversioned API (kept for backward compatibility).
+    target.include_router(learning_router)
+    
 _include_api_routes(app)
-
-# Versioned API namespace for future breaking changes.
 api_v1_router = APIRouter(prefix="/api/v1")
 _include_api_routes(api_v1_router)
 app.include_router(api_v1_router)

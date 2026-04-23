@@ -89,6 +89,11 @@ class Settings:
     CV_PARSER_USE_SEMANTIC_AUGMENT: bool = _get_bool_env("CV_PARSER_USE_SEMANTIC_AUGMENT", True)
     CV_PARSER_SKILL_TIME_BUDGET_SECONDS: float = max(0.05, _get_float_env("CV_PARSER_SKILL_TIME_BUDGET_SECONDS", 0.75))
     CV_PARSER_SLO_MS: int = max(200, _get_int_env("CV_PARSER_SLO_MS", 2000))
+    ACTIVE_LEARNING_ENABLED: bool = _get_bool_env("ACTIVE_LEARNING_ENABLED", True)
+    ACTIVE_LEARNING_REVIEW_THRESHOLD: float = max(
+        0.0,
+        min(1.0, _get_float_env("ACTIVE_LEARNING_REVIEW_THRESHOLD", 0.75)),
+    )
 
     
 

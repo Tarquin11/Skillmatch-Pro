@@ -70,6 +70,8 @@ class CandidateUploadRespose(StrictBaseModel):
     certifications: List[str] = Field(default_factory=list)
     hands_on_projects: List[str] = Field(default_factory=list)
     project_skill_links: List[CandidateProjectSkillLink] = Field(default_factory=list)
+    needs_review_count: int = Field(default=0, ge=0)
+    queued_unknown_entities: List[str] = Field(default_factory=list)
 
 
 class CandidateListItem(StrictBaseModel):

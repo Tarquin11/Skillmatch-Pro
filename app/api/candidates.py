@@ -25,6 +25,7 @@ from app.models.skill import Skill
 from app.schemas.candidate import CandidateListItem, CandidateUpdateRequest, CandidateUploadRespose
 from app.schemas.common import ErrorResponse
 from app.schemas.listing import ListQuery
+from app.services.active_learning import queue_unknown_entities_for_parsed_cv, should_queue_skill_review
 from app.services.cv_parser import parse_cv_safe
 
 router = APIRouter(
@@ -365,6 +366,7 @@ def _persist_candidate_profile(
     db: Session,
     filename: str,
     parsed: dict,
+    known_skill_names: list[str],
     created_by: int | None,
 ) -> Employee:
     display_name = _resolve_candidate_display_name(parsed, filename)
@@ -391,8 +393,11 @@ def _persist_candidate_profile(
     db.flush()
 
     seen_skills: set[str] = set()
-    for raw in parsed.get("skills") or []:
-        name = str(raw or "").strip()
+    extracted_rows = parsed.get("extracted_skills") or [
+        {"skill": raw, "confidence": 0.6, "source": "legacy"} for raw in (parsed.get("skills") or [])
+    ]
+    for row in extracted_rows:
+        name = str((row or {}).get("skill") if isinstance(row, dict) else row or "").strip()
         if not name:
             continue
         key = name.lower()
@@ -401,8 +406,15 @@ def _persist_candidate_profile(
         seen_skills.add(key)
 
         skill = db.query(Skill).filter(func.lower(Skill.name) == key).first()
+        if skill is None and should_queue_skill_review(
+            skill_name=name,
+            source=(str(row.get("source") or "") if isinstance(row, dict) else None),
+            confidence=((row or {}).get("confidence") if isinstance(row, dict) else None),
+            known_skill_names=known_skill_names,
+        ):
+            continue
         if skill is None:
-            skill = Skill(name=name)
+            skill = Skill(name=name, created_by=created_by)
             db.add(skill)
             db.flush()
 
@@ -604,11 +616,14 @@ async def upload_cv(
             use_hf_ner=True,
             use_semantic_augment=True,
         )
+        candidate = None
+        queued_unknowns = []
         try:
-            _persist_candidate_profile(
+            candidate = _persist_candidate_profile(
                 db=db,
                 filename=(file.filename or safe_name),
                 parsed=parsed,
+                known_skill_names=known_skills,
                 created_by=(int(getattr(current_user, "id")) if getattr(current_user, "id", None) is not None else None),
             )
         except Exception:
@@ -618,6 +633,21 @@ async def upload_cv(
             warnings.append("Candidate profile could not be saved automatically.")
             parsed["warnings"] = warnings
             logger.exception("candidate_autosave_failure filename=%s", file.filename)
+        if candidate is not None:
+            try:
+                queued_unknowns = queue_unknown_entities_for_parsed_cv(
+                    db=db,
+                    parsed=parsed,
+                    known_skill_names=known_skills,
+                    candidate_id=int(candidate.id),
+                    created_by=(int(getattr(current_user, "id")) if getattr(current_user, "id", None) is not None else None),
+                )
+            except Exception:
+                db.rollback()
+                warnings = list(parsed.get("warnings") or [])
+                warnings.append("Active learning queue could not be updated.")
+                parsed["warnings"] = warnings
+                logger.exception("active_learning_queue_failure filename=%s", file.filename)
 
         return CandidateUploadRespose(
             filename=file.filename,
@@ -643,6 +673,12 @@ async def upload_cv(
             certifications=parsed.get("certifications") or [],
             hands_on_projects=parsed.get("hands_on_projects") or [],
             project_skill_links=parsed.get("project_skill_links") or [],
+            needs_review_count=len(queued_unknowns),
+            queued_unknown_entities=[
+                str(getattr(entity, "raw_value", "")).strip()
+                for entity in queued_unknowns
+                if str(getattr(entity, "raw_value", "")).strip()
+            ],
         )
     except HTTPException:
         raise
