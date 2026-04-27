@@ -57,3 +57,22 @@ data/splits_by_candidate/
 
 # Ignore uploaded/local CV corpus
 /data/CVs/
+/data/Cert-CV/
+/data/models/
+/app/ESCO_French_Dataset/
+/app/ESCO_English_Dataset/
+/data/lexicons/
+/data/training/
+/data/labels/cv_extraction_synth_ollama.jsonl
+/data/labels/cv_extraction_ollama_155_extended.jsonl
+/data/labels/cv_extraction_synth_200_extended.jsonl
+/data/labels/cv_extraction_hf_labels_extended.jsonl
+/data/labels/cv_extraction_synth_ollama_155_extended.jsonl
+/data/labels/cv_extraction_ollama_155_extended.jsonl
+/data/labels/cv_extraction_synth_ollama.jsonl
+/data/labels/cv_extraction_ollama.jsonl
+/data/labels/cv_extraction_synth_200_extended.jsonl
+/data/labels/cv_extraction_hf_labels.jsonl
+/data/labels/cv_extraction_synth_200.jsonl
+
+

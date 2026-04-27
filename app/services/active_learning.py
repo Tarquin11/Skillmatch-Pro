@@ -142,6 +142,79 @@ def queue_unknown_entities_for_parsed_cv(
     return queued
 
 
+def queue_certs_and_projects_for_review(
+    *,
+    db: Session,
+    certs: list[str] | None,
+    projects: list[str] | None,
+    candidate_id: int | None,
+    created_by: int | None,
+) -> int:
+    """Queue certifications and projects with low confidence for HITL review."""
+    if not bool(settings.ACTIVE_LEARNING_ENABLED):
+        return 0
+
+    queued_count = 0
+    seen_terms: set[str] = set()
+
+    # Low confidence (0.60) for certifications since they are often short/ambiguous and more likely to be noisy, but still worth reviewing in HITL --- IGNORE ---
+    for cert_value in (certs or []):
+        cert_value = str(cert_value or "").strip()
+        if not cert_value:
+            continue
+
+        normalized = normalize_learning_value(cert_value, entity_type="certification")
+        if not normalized or normalized in seen_terms:
+            continue
+        seen_terms.add(normalized)
+
+        entity = upsert_unknown_entity(
+            db=db,
+            raw_value=cert_value,
+            normalized_value=normalized,
+            entity_type_guess="certification",
+            source="cert_section",
+            confidence=0.60,
+            confidence_band="low",
+            evidence=[cert_value],
+            context_excerpt=cert_value[:_CONTEXT_CHARS],
+            candidate_id=candidate_id,
+            created_by=created_by,
+        )
+        queued_count += 1
+
+    # Queue projects - assign low confidence (0.65) so all go to HITL review
+    for project_value in (projects or []):
+        project_value = str(project_value or "").strip()
+        if not project_value:
+            continue
+
+        normalized = normalize_learning_value(project_value, entity_type="project")
+        if not normalized or normalized in seen_terms:
+            continue
+        seen_terms.add(normalized)
+
+        entity = upsert_unknown_entity(
+            db=db,
+            raw_value=project_value,
+            normalized_value=normalized,
+            entity_type_guess="project",
+            source="project_section",
+            confidence=0.65,
+            confidence_band="low",
+            evidence=[project_value],
+            context_excerpt=project_value[:_CONTEXT_CHARS],
+            candidate_id=candidate_id,
+            created_by=created_by,
+        )
+        queued_count += 1
+
+    if queued_count > 0:
+        db.commit()
+
+    return queued_count
+
+
 def upsert_unknown_entity(
     *,
     db: Session,

@@ -62,6 +62,13 @@ _CERTIFICATION_HEADING_HINTS = (
     "diploma",
     "diplomas",
     "training",
+    "formations",
+    "cours",
+    "diplomes",
+    "attestations",
+    "certifs",
+    "formation en",
+    "certificats obtenus",
 )
 _PROJECT_HEADING_HINTS = (
     "project",
@@ -80,6 +87,13 @@ _PROJECT_HEADING_HINTS = (
     "portfolio",
     "realisation",
     "réalisation",
+    "projets",
+    "projets realises",
+    "projets pratiques",
+    "mes projets",
+    "travaux",
+    "realisations",
+    "applications developpees",
 )
 _LANGUAGE_HEADING_HINTS = ("language", "languages", "langue", "langues", "idioma", "idiomas")
 _DURATION_PHRASE_RE = re.compile(r"^\d+(?:\.\d+)?\s*(?:months?|years?|yrs?)$", re.I)
@@ -99,6 +113,7 @@ _LEADING_DATE_RANGE_RE = re.compile(
     r"^\s*\d{1,2}\s+[A-Za-z]+\s*[-–—]\s*\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?\s+",
     re.IGNORECASE,
 )
+_DATE_RANGE_RE = re.compile(r"^(19|20)\d{2}\s*[-–—]\s*(19|20)\d{2}$")
 _OPEN_VOCAB_BOILERPLATE = (
     "implementation of",
     "development of",
@@ -213,6 +228,18 @@ _TITLE_KEYWORDS = (
     "gestionnaire",
     "coordinateur",
     "coordonnateur",
+    "etudiante",
+    "etudiant",
+    "stagiaire",
+    "alternant",
+    "apprenti",
+    "ingenieure",
+    "ingenieur",
+    "developpeur",
+    "developpeuse",
+    "analyste",
+    "concepteur",
+    "conceptrice",
 )
 _EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().\-]{6,}\d)(?!\w)")
@@ -589,8 +616,6 @@ def _looks_like_semantic_section_heading(key: str, words: list[str]) -> bool:
         return False
     if re.search(r"[,;|]", key):
         return False
-
-    # Dedicated blocks are reliable heading anchors.
     if _is_certification_heading(key) or _is_language_heading(key):
         return True
 
@@ -719,8 +744,6 @@ def _heading_candidate(raw_line: str) -> tuple[bool, str, float]:
         return False, "", 0.0
     if _looks_like_letter_spaced_text(line):
         line = _collapse_letter_spaced_text(line)
-
-    # Bullet lines are content items (skills/tasks), not section headers.
     if any(line.startswith(prefix) for prefix in BULLET_PREFIXES):
         return False, "", 0.0
 
@@ -733,7 +756,6 @@ def _heading_candidate(raw_line: str) -> tuple[bool, str, float]:
     if not trimmed or len(trimmed) > 80:
         return False, "", 0.0
 
-    # Comma/semicolon/pipe-heavy lines are almost always content lists, not headings.
     if re.search(r"[,;|]", trimmed):
         return False, "", 0.0
 
@@ -840,9 +862,6 @@ def _year_from_token(token: str) -> int | None:
 
 _EMBEDDER: EmbeddingService | None = None
 _EMBED_CACHE: dict[int, tuple[np.ndarray, list[str]]] = {}
-_HF_SKILL_NER_PIPE: Callable[[str], list[dict[str, Any]]] | None = None
-_HF_SKILL_NER_LOAD_ATTEMPTED = False
-
 def _get_embedder() -> EmbeddingService | None:
     global _EMBEDDER
     if _EMBEDDER is not None:
@@ -853,59 +872,6 @@ def _get_embedder() -> EmbeddingService | None:
         _EMBEDDER = None
     return _EMBEDDER
 
-
-def _get_hf_skill_ner_pipeline() -> Callable[[str], list[dict[str, Any]]] | None:
-    """Lazy-load HF token-classification model for optional NER spans."""
-    global _HF_SKILL_NER_PIPE
-    global _HF_SKILL_NER_LOAD_ATTEMPTED
-    if _HF_SKILL_NER_PIPE is not None:
-        return _HF_SKILL_NER_PIPE
-    if _HF_SKILL_NER_LOAD_ATTEMPTED:
-        return None
-    _HF_SKILL_NER_LOAD_ATTEMPTED = True
-    try:
-        from transformers import pipeline
-
-        _HF_SKILL_NER_PIPE = pipeline(
-            "token-classification",
-            model="jjzha/escoxlmr_skill_extraction",
-            aggregation_strategy="simple",
-        )
-    except Exception:
-        _HF_SKILL_NER_PIPE = None
-    return _HF_SKILL_NER_PIPE
-
-
-def _extract_hf_ner_spans(text: str, max_spans: int = 200) -> list[str]:
-    ner = _get_hf_skill_ner_pipeline()
-    if ner is None:
-        return []
-    safe_text = (text or "").strip()[:24000]
-    if not safe_text:
-        return []
-    try:
-        rows = ner(safe_text)
-    except Exception:
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        span = str(row.get("word") or "").strip()
-        if not span:
-            continue
-        span = re.sub(r"\s+", " ", span).strip(" -,:.;")
-        if not span:
-            continue
-        key = _normalize_text(span)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        out.append(span)
-        if len(out) >= max_spans:
-            break
-    return out
 
 SEMANTIC_AUGMENT_MIN_SIMILARITY = _env_float(
     "CV_PARSER_SEMANTIC_AUGMENT_MIN_SIMILARITY",
@@ -1324,135 +1290,6 @@ def _spans_for_semantic_augment(
                 return spans
     return spans
 
-
-def augment_skills_semantically_gated(
-    text: str,
-    known_skills: list[str],
-    existing_skill_keys: set[str],
-    *,
-    min_confidence: float = 0.6,
-    min_similarity: float = SEMANTIC_AUGMENT_MIN_SIMILARITY,
-    max_additions: int = 15,
-    time_budget_seconds: float | None = 0.45,
-) -> list[dict[str, Any]]:
-    """
-    Gated semantic augmenter: embed line spans vs catalog, add skills only when
-    similarity is high, the skill is not already detected, and a text span exists
-    as evidence. Does not modify or replace rule/pattern rows.
-    """
-    if not known_skills:
-        return []
-    sections, section_weights = _extract_sections(text)
-    span_items = _spans_for_semantic_augment(sections=sections)
-    if not span_items:
-        return []
-    skill_vectors, skill_names = _get_skill_embeddings(known_skills)
-    if skill_vectors is None or not skill_names:
-        return []
-    embedder = _get_embedder()
-    if not embedder:
-        return []
-    deadline = None
-    if time_budget_seconds and time_budget_seconds > 0:
-        deadline = time.perf_counter() + float(time_budget_seconds)
-
-    def _over_time() -> bool:
-        return deadline is not None and time.perf_counter() >= deadline
-
-    phrases = [phrase for phrase, _section in span_items]
-    try:
-        span_vectors = np.asarray(embedder.generate_embeddings(phrases), dtype=np.float32)
-    except Exception:
-        return []
-    if span_vectors.size == 0:
-        return []
-
-    sims = span_vectors @ skill_vectors.T
-    best_for_skill: dict[str, tuple[float, float, str, str, str]] = {}
-
-    for i, (span, section) in enumerate(span_items):
-        if _over_time():
-            break
-        if _span_text_negated(span):
-            continue
-        row = sims[i]
-        n_sk = int(row.shape[0])
-        if n_sk <= 0:
-            continue
-        kk = min(SEMANTIC_AUGMENT_TOP_CANDIDATES, n_sk)
-        if kk <= 0:
-            continue
-        idxs = np.argpartition(-row, kk - 1)[:kk]
-        idxs = sorted([int(j) for j in idxs], key=lambda j: -float(row[j]))
-        section_weight = max(0.75, min(1.12, float(section_weights.get(section, 0.90))))
-        section_slug = re.sub(r"[^a-z0-9]+", "_", _normalize_text(section)[:40]).strip("_") or "section"
-        section_is_skillish = _is_skill_heading(section) or _is_experience_heading(section) or _is_project_heading(section)
-        weak_context = bool(_CONTEXT_NEGATIVE_RE.search(_normalize_for_pattern(span)))
-        for j in idxs:
-            sim = float(row[j])
-            if sim < min_similarity:
-                continue
-            display = skill_names[j]
-            canonical = canonicalize_skill(display)
-            sk = _skill_key(canonical)
-            if not sk or sk in existing_skill_keys:
-                continue
-            lexical_overlap = _semantic_augment_lexical_overlap(span, display)
-            acronym_match = _semantic_augment_acronym_match(span, display)
-            if lexical_overlap < SEMANTIC_AUGMENT_MIN_LEXICAL_OVERLAP and not acronym_match:
-                continue
-
-            is_hard_ambiguous = canonical in SEMANTIC_AUGMENT_HARD_AMBIGUITY
-            if is_hard_ambiguous:
-                if sim < (min_similarity + SEMANTIC_AUGMENT_AMBIGUOUS_MIN_SIM_BONUS):
-                    continue
-                if weak_context:
-                    continue
-                if not section_is_skillish:
-                    continue
-                if lexical_overlap < SEMANTIC_AUGMENT_AMBIGUOUS_MIN_LEXICAL and not acronym_match:
-                    continue
-
-            rerank_raw = _semantic_augment_rerank_score(
-                sim=sim,
-                lexical_overlap=lexical_overlap,
-                acronym_match=acronym_match,
-                section_weight=section_weight,
-            )
-            source_key = "semantic_augment_ambiguous" if is_hard_ambiguous else "semantic_augment"
-            calibrated = _calibrate_semantic_augment_score(rerank_raw, source_key=source_key)
-            threshold = _semantic_augment_threshold_for_source(source_key=source_key, min_confidence=min_confidence)
-            if calibrated < threshold:
-                continue
-
-            prev = best_for_skill.get(sk)
-            if prev is None or calibrated > prev[0] or (abs(calibrated - prev[0]) <= 1e-6 and sim > prev[1]):
-                best_for_skill[sk] = (
-                    calibrated,
-                    sim,
-                    span,
-                    canonical,
-                    f"semantic_augment:{section_slug}",
-                )
-
-    ranked = sorted(best_for_skill.values(), key=lambda t: (-t[0], -t[1]))[:max_additions]
-    out: list[dict[str, Any]] = []
-    for calibrated, _sim, span, canonical, source in ranked:
-        if _span_text_negated(span):
-            continue
-        ev_span = re.sub(r"\s+", " ", span).strip()
-        if len(ev_span) > 180:
-            ev_span = ev_span[:177] + "..."
-        out.append(
-            {
-                "skill": canonical,
-                "confidence": round(calibrated, 2),
-                "source": source,
-                "evidence": [ev_span],
-                "_conf_channels": {"semantic_augment"},
-            }
-        )
-    return out
 
 
 def _get_skill_embeddings(known_skills: list[str]) -> tuple[np.ndarray | None, list[str]]:
@@ -2106,49 +1943,6 @@ def _is_bullet_line(raw: str) -> bool:
     return line.startswith(BULLET_PREFIXES)
 
 
-def extract_sentence_skill_rows(
-    text: str,
-    min_confidence: float = 0.6,
-    max_rows: int = 40,
-    debug: bool = False,
-) -> list[dict[str, Any]]:
-    """
-    Sentence-level extraction independent of strict section boundaries.
-    Prioritizes bullet lines and action/object skill phrases.
-    """
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    lines = [(ln or "").strip() for ln in (text or "").splitlines()[:MAX_LINES]]
-    for line in lines:
-        if not line or _is_noise_line(line):
-            continue
-        norm = _deocr_low(_normalize_for_pattern(line))
-        if not norm:
-            continue
-        bullet = _is_bullet_line(line)
-        for patt, canonical in _SKILL_SENTENCE_PATTERNS.items():
-            if not re.search(patt, norm):
-                continue
-            sk = _skill_key(canonical)
-            if not sk or sk in seen:
-                continue
-            seen.add(sk)
-            base = 0.76 if bullet else 0.70
-            conf = round(max(float(min_confidence), min(0.90, base + (0.03 if len(canonical.split()) >= 2 else 0.0))), 2)
-            row = {
-                "skill": canonical,
-                "confidence": conf,
-                "source": "sentence_bullet" if bullet else "sentence_text",
-            }
-            out.append(row)
-            if debug:
-                logger.debug("sentence_skill_detected sentence=%r skill=%s source=%s", line, canonical, row["source"])
-            if len(out) >= max_rows:
-                return out
-    out.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
-    return out
-
-
 def _open_vocab_phrase_ok(raw: str, *, language_section: bool = False) -> bool:
     phrase = _strip_open_vocab_leading_junk(raw)
     phrase = _strip_parenthetical_qualifiers(phrase)
@@ -2206,14 +2000,12 @@ def _normalize_open_vocab_display(raw: str) -> str:
     if not display:
         return ""
 
-    # Strip common CV labels/prefixes that leak into extracted phrases.
     prev = None
     while display and display != prev:
         prev = display
         display = _OPEN_VOCAB_LABEL_PREFIX_RE.sub("", display).strip()
         display = _OPEN_VOCAB_NOISE_PREFIX_RE.sub("", display).strip()
 
-    # If a certificate marker appears in the phrase, keep the tail skill token(s).
     m = _OPEN_VOCAB_CERT_MARKER_RE.search(display)
     if m and m.end() < len(display):
         tail = display[m.end() :].strip(" .,:;|/\\-")
@@ -2428,7 +2220,6 @@ def _split_certification_candidates(candidate: str) -> list[str]:
     text = str(candidate or "").strip()
     if not text:
         return []
-    # Avoid breaking "CCNA 1, 2, 3 - Cisco Networking Academy" into noisy fragments.
     if _CERTIFICATION_ACRONYM_RE.search(text) and re.search(r"\b\d\s*,\s*\d", text):
         return [text]
     return [part.strip() for part in re.split(r"[|;]+", text) if part and part.strip()]
@@ -2462,6 +2253,10 @@ def _looks_like_certification_entry(raw: str) -> bool:
         return True
     if any(re.search(rf"\b{re.escape(alias)}\b", low) for alias in _CERTIFICATION_ALIAS_HINTS):
         return True
+
+    if re.search(r"\(\s*(19|20)\d{2}\s*\)\s*$", raw) and len(raw.split()) >= 2:
+        return True
+
     return False
 
 
@@ -2478,7 +2273,8 @@ def _looks_like_project_entry(raw: str) -> bool:
         return False
     if _looks_like_skill_inventory_line(value):
         return False
-    if len(low.split()) < 2 and not _PROJECT_ACTION_HINT_RE.search(low):
+    is_all_caps_acronym = raw.isupper() and len(raw) >= 3
+    if len(low.split()) < 2 and not is_all_caps_acronym and not _PROJECT_ACTION_HINT_RE.search(low):
         return False
     return True
 
@@ -2499,7 +2295,6 @@ def _looks_like_project_detail_line(raw: str) -> bool:
     if re.fullmatch(r"\d+", low):
         return False
     parts = [part.strip() for part in re.split(r"[,\|;/]+", value) if part.strip()]
-    # Treat compact comma-separated capability lists as project details.
     if len(parts) >= 2 and len(low.split()) <= 20:
         return True
     return False
@@ -2547,7 +2342,6 @@ def extract_certifications_from_sections(text: str, max_items: int = 40) -> list
             if heading_key:
                 if _is_certification_heading(heading_key):
                     continue
-                # Hard boundary: stop certification ingestion when a new section starts.
                 if (
                     _is_project_heading(heading_key)
                     or _is_skill_heading(heading_key)
@@ -2559,8 +2353,10 @@ def extract_certifications_from_sections(text: str, max_items: int = 40) -> list
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
             for part in _split_certification_candidates(candidate):
+                if not _looks_like_certification_entry(part):
+                    continue
                 cleaned = _normalize_board_entry(part)
-                if not cleaned or not _looks_like_certification_entry(cleaned):
+                if not cleaned:
                     continue
                 entries.append(cleaned)
 
@@ -2570,8 +2366,10 @@ def extract_certifications_from_sections(text: str, max_items: int = 40) -> list
             inline_label, inline_tail = _split_inline_labeled_phrase(line)
             candidate = inline_tail if inline_label and _is_certification_heading(inline_label) else line
             for part in _split_certification_candidates(candidate):
+                if not _looks_like_certification_entry(part):
+                    continue
                 cleaned = _normalize_board_entry(part)
-                if not cleaned or not _looks_like_certification_entry(cleaned):
+                if not cleaned:
                     continue
                 entries.append(cleaned)
                 if len(entries) >= max_items:
@@ -2633,10 +2431,10 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
             cleaned = _normalize_board_entry(candidate)
             if not cleaned:
                 continue
-            if _looks_like_project_detail_line(cleaned) and projects:
+            if _looks_like_project_detail_line(candidate) and projects:
                 _push_project_detail(cleaned)
                 continue
-            if not _looks_like_project_entry(cleaned):
+            if not _looks_like_project_entry(candidate):
                 continue
             _push_project_title(cleaned)
             if len(projects) >= max_items:
@@ -2650,10 +2448,10 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
             cleaned = _normalize_board_entry(candidate)
             if not cleaned:
                 continue
-            if _looks_like_project_detail_line(cleaned) and projects:
+            if _looks_like_project_detail_line(candidate) and projects:
                 _push_project_detail(cleaned)
                 continue
-            if not _looks_like_project_entry(cleaned):
+            if not _looks_like_project_entry(candidate):
                 continue
             _push_project_title(cleaned)
             if len(projects) >= max_items:
@@ -2676,8 +2474,6 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
                 continue
             if not _looks_like_project_entry(cleaned):
                 continue
-            # Global fallback is intentionally strict: accept only action-based
-            # project evidence to avoid classifying narrative summary lines as projects.
             if not _PROJECT_ACTION_HINT_RE.search(cleaned):
                 continue
             _push_project_title(cleaned)
@@ -2685,74 +2481,6 @@ def extract_hands_on_projects_from_sections(text: str, max_items: int = 40) -> l
                 break
 
     return [str(item.get("title", "")).strip() for item in projects if str(item.get("title", "")).strip()][:max_items]
-
-
-def extract_context_board_skill_rows(
-    certifications: list[str],
-    hands_on_projects: list[str],
-    known_skills: Iterable[str],
-    min_confidence: float,
-    max_rows: int = 30,
-) -> list[dict[str, Any]]:
-    known_list = [str(skill or "").strip() for skill in known_skills if str(skill or "").strip()]
-    if not known_list:
-        return []
-    index = _build_skill_index(known_list)
-    if not index:
-        return []
-
-    alias_to_skill: dict[str, str] = {}
-    for canonical, meta in index.items():
-        for alias in meta.get("aliases", set()):
-            if not alias:
-                continue
-            alias_to_skill.setdefault(alias, canonical)
-
-    rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    floor = max(float(min_confidence), 0.60)
-    sources = [
-        ("certification", certifications, 0.66),
-        ("hands_on_project", hands_on_projects, 0.64),
-    ]
-
-    for source_name, entries, base_confidence in sources:
-        for entry in entries:
-            if len(rows) >= max_rows:
-                return rows
-            normalized = _normalize_for_pattern(entry)
-            tokens = _tokenize(normalized)
-            if not tokens:
-                continue
-            ngrams = _ngram_candidates(tokens[:60], max_n=4)
-            matches: set[str] = set()
-            for gram in ngrams:
-                key = _skill_key(gram)
-                if not key:
-                    continue
-                skill = alias_to_skill.get(key)
-                if not skill:
-                    continue
-                matches.add(skill)
-
-            for skill in sorted(matches, key=lambda value: _normalize_text(value)):
-                sk = _skill_key(skill)
-                if not sk or sk in seen:
-                    continue
-                seen.add(sk)
-                evidence = re.sub(r"\s+", " ", entry).strip()[:180]
-                rows.append(
-                    {
-                        "skill": skill,
-                        "confidence": round(max(floor, min(0.72, base_confidence)), 2),
-                        "source": f"context_board:{source_name}",
-                        "evidence": [evidence] if evidence else [],
-                    }
-                )
-                if len(rows) >= max_rows:
-                    return rows
-
-    return rows
 
 
 def build_project_skill_links(
@@ -2820,325 +2548,6 @@ def build_project_skill_links(
 
     links.sort(key=lambda item: (-float(item.get("confidence", 0.0)), str(item.get("skill", ""))))
     return links[:max_links]
-
-
-def extract_open_vocabulary_skill_rows(
-    text: str,
-    catalog_skill_keys: set[str],
-    min_confidence: float,
-    max_rows: int = 80,
-    rejected_out: list[str] | None = None,
-    known_skills: set[str] | None = None,
-    synonyms: dict[str, list[str]] | None = None,
-) -> list[dict[str, Any]]:
-    """Emit skills read from skills/tools/languages (and related) sections, not limited to the DB catalog."""
-    sections, section_weights = _extract_sections(text)
-    section_phrases = _extract_section_phrases(sections)
-    rows: list[dict[str, Any]] = []
-    seen_keys: set[str] = set()
-
-    def _append_candidate(candidate_phrase: str, sec_key: str, *, base_weight: float) -> None:
-        if len(rows) >= max_rows:
-            return
-        if not _open_vocab_phrase_ok(candidate_phrase, language_section=False):
-            if rejected_out is not None:
-                rejected_out.append(candidate_phrase.strip()[:120])
-            return
-        display = _display_open_vocab_skill(candidate_phrase)
-        if not display or _looks_like_language_phrase(display):
-            return
-        sk = _skill_key(display)
-        if not sk or sk in catalog_skill_keys or sk in seen_keys:
-            return
-        seen_keys.add(sk)
-        w = max(0.75, min(1.1, float(base_weight)))
-        floor = max(float(min_confidence), 0.60)
-        wc = len(display.split())
-        if wc <= 4:
-            conf = round(min(0.72, max(floor, 0.64 * w)), 2)
-        else:
-            conf = round(min(0.68, max(floor, 0.60 * w)), 2)
-        if conf < min_confidence:
-            return
-        sec_slug = re.sub(r"[^a-z0-9]+", "_", _normalize_text(sec_key)[:48]).strip("_") or "section"
-        rows.append(
-            {
-                "skill": display,
-                "confidence": conf,
-                "source": f"cv_section:{sec_slug}",
-                "evidence": [f"section:{sec_slug}"],
-            }
-        )
-
-    for phrase, section in section_phrases:
-        inline_label, inline_tail = _split_inline_labeled_phrase(phrase)
-        section_is_cert = _is_certification_heading(section)
-        section_is_skill = _is_skill_heading(section)
-        section_is_technical = section_is_cert or _is_technical_heading(section)
-        inline_is_cert = bool(inline_label) and _is_certification_heading(inline_label)
-        inline_is_skill = bool(inline_label) and _is_skill_heading(inline_label)
-        inline_is_technical = inline_is_cert or (inline_is_skill and _is_technical_heading(inline_label))
-        if not ((section_is_skill or section_is_cert) or (inline_is_skill or inline_is_cert)):
-            continue
-        lang_sec = _is_language_heading(section)
-        inline_lang = bool(inline_label) and _is_language_heading(inline_label)
-        if lang_sec or inline_lang:
-            continue
-        if _is_education_heading(section) and not inline_is_technical:
-            continue
-        # Skip generic skill buckets unless an inline technical label is present.
-        if not section_is_technical and not inline_is_technical:
-            continue
-        candidate_phrase = inline_tail if inline_is_technical and inline_tail else phrase
-        w = float(section_weights.get(section, 0.9))
-        if inline_is_skill and not section_is_skill:
-            w = max(w, 0.95)
-        sec_key = inline_label if (inline_is_skill and not section_is_skill) else section
-        _append_candidate(candidate_phrase, sec_key, base_weight=w)
-        if len(rows) >= max_rows:
-            break
-
-    if len(rows) < max_rows:
-        for raw_line in (text or "").splitlines()[:MAX_LINES]:
-            if len(rows) >= max_rows:
-                break
-            line = raw_line[:MAX_LINE_CHARS].strip()
-            if not line:
-                continue
-            for prefix in BULLET_PREFIXES:
-                if line.startswith(prefix):
-                    line = line[len(prefix):].strip()
-                    break
-            inline_label, inline_tail = _split_inline_labeled_phrase(line)
-            if not inline_label or not inline_tail:
-                continue
-            if _is_language_heading(inline_label):
-                continue
-            if _is_certification_heading(inline_label):
-                is_inline_technical = True
-            elif _is_skill_heading(inline_label):
-                is_inline_technical = _is_technical_heading(inline_label)
-            else:
-                is_inline_technical = False
-            if not is_inline_technical:
-                continue
-            for part in re.split(r"[,\|;/&]+", inline_tail):
-                phrase = part.strip()
-                if not phrase:
-                    continue
-                _append_candidate(phrase, inline_label, base_weight=0.95)
-                if len(rows) >= max_rows:
-                    break
-
-    rows.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
-    return rows
-
-
-def extract_soft_skill_rows(
-    text: str,
-    min_confidence: float = 0.6,
-    max_rows: int = 20,
-    fallback_mode: bool = False,
-) -> list[dict[str, Any]]:
-    """Extract soft/managerial competencies as a dedicated channel."""
-    sections, _section_weights = _extract_sections(text)
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    floor = max(float(min_confidence), 0.62 if fallback_mode else 0.66)
-    strict_context_canon = {"coordination", "communication", "planning", "budget management"}
-    soft_context_terms = (
-        "projet",
-        "project",
-        "equipe",
-        "team",
-        "stakeholder",
-        "budget",
-        "plan",
-        "risque",
-        "risk",
-        "client",
-        "delivery",
-        "pilotage",
-        "coordination",
-        "communication",
-    )
-    for section, lines in sections.items():
-        sec_key = _normalize_text(section)
-        consider_section = (
-            _is_skill_heading(section)
-            or _is_experience_heading(section)
-            or "competence" in sec_key
-            or "compétence" in section.lower()
-        )
-        if not consider_section and not fallback_mode:
-            continue
-        for raw_line in lines:
-            line = _normalize_text(raw_line)
-            line = _deocr_low(line)
-            line_core = re.sub(r"[^a-z0-9\s]", " ", line)
-            line_core = re.sub(r"\s+", " ", line_core).strip()
-            if not line_core:
-                continue
-            bullet = _is_bullet_line(raw_line)
-            core_tokens = [t for t in line_core.split() if t]
-            if core_tokens and sum(1 for t in core_tokens if _looks_high_noise_token(t)) >= max(1, len(core_tokens) // 2):
-                continue
-            for hint, canonical in _SOFT_SKILL_HINTS.items():
-                hint_norm = _deocr_low(hint)
-                if not _contains_phrase(line_core, hint_norm):
-                    continue
-                if canonical in strict_context_canon:
-                    has_context = any(term in line_core for term in soft_context_terms)
-                    wc = len(line_core.split())
-                    if bullet and not _is_experience_heading(section) and wc > 6 and not has_context:
-                        continue
-                    if canonical in {"coordination", "communication"} and not _is_experience_heading(section):
-                        if wc > 3 and not has_context:
-                            continue
-                    if not (bullet or _is_experience_heading(section) or has_context):
-                        continue
-                sk = _skill_key(canonical)
-                if not sk or sk in seen:
-                    continue
-                seen.add(sk)
-                section_boost = 0.08 if (_is_experience_heading(section) or "projet" in sec_key or "project" in sec_key) else 0.04
-                match_boost = min(0.06, max(0.0, (len(hint.split()) - 1) * 0.015))
-                lexical_boost = (sum(ord(ch) for ch in canonical) % 4) * 0.01
-                base = 0.68 if fallback_mode else 0.70
-                conf = round(min(0.88, max(floor, base + section_boost + match_boost + lexical_boost)), 2)
-                source = "softskill_fallback" if fallback_mode else f"softskill:{sec_key or 'section'}"
-                out.append({"skill": canonical, "confidence": conf, "source": source})
-                if len(out) >= max_rows:
-                    return out
-    out.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
-    return out
-
-
-def detect_skill_spans_with_ensemble(
-    text: str,
-    known_skills: Iterable[str],
-    min_confidence: float = 0.6,
-    semantic_threshold: float = 0.75,
-    max_rows: int = 30,
-    use_hf_ner: bool = False,
-) -> list[dict[str, Any]]:
-    """
-    Lightweight NER/span-like matcher:
-    - extracts short spans from skill/tool sections
-    - semantically maps span -> nearest known skill
-    - emits as a separate channel/source (`ner_span`)
-    """
-    known_list = [str(k).strip() for k in known_skills if isinstance(k, str) and str(k).strip()]
-    if not known_list:
-        return []
-
-    sections, section_weights = _extract_sections(text)
-    section_phrases = _extract_section_phrases(sections)
-    span_items: list[tuple[str, str]] = []
-    seen_span: set[str] = set()
-    for phrase, section in section_phrases:
-        if not (_is_skill_heading(section) or _is_certification_heading(section)) or _is_language_heading(section):
-            continue
-        if not _open_vocab_phrase_ok(phrase):
-            continue
-        norm = _normalize_text(phrase)
-        if not norm or norm in seen_span:
-            continue
-        seen_span.add(norm)
-        span_items.append((phrase, section))
-        if len(span_items) >= 200:
-            break
-    if use_hf_ner:
-        for phrase in _extract_hf_ner_spans(text):
-            if not _open_vocab_phrase_ok(phrase):
-                continue
-            norm = _normalize_text(phrase)
-            if not norm or norm in seen_span:
-                continue
-            seen_span.add(norm)
-            span_items.append((phrase, "hf_ner"))
-            if len(span_items) >= 260:
-                break
-    if not span_items:
-        return []
-
-    skill_vectors, skill_names = _get_skill_embeddings(known_list)
-    embedder = _get_embedder()
-
-    floor = max(float(min_confidence), 0.68)
-    if embedder is None or skill_vectors is None or not skill_names:
-        # Offline-safe fallback for NER spans: lexical mapping to known skills.
-        out_fallback: list[dict[str, Any]] = []
-        seen_skill_fallback: set[str] = set()
-        known_pairs = [(skill, _skill_key(skill)) for skill in known_list]
-        for phrase, section in span_items:
-            phrase_key = _skill_key(phrase)
-            if not phrase_key:
-                continue
-            best_skill: str | None = None
-            best_ratio = 0.0
-            for skill, key in known_pairs:
-                if not key:
-                    continue
-                if phrase_key == key:
-                    ratio = 1.0
-                elif phrase_key in key or key in phrase_key:
-                    ratio = 0.92
-                else:
-                    ratio = SequenceMatcher(None, phrase_key, key).ratio()
-                if ratio > best_ratio:
-                    best_ratio = ratio
-                    best_skill = skill
-            if not best_skill or best_ratio < 0.86:
-                continue
-            sk = _skill_key(best_skill)
-            if not sk or sk in seen_skill_fallback:
-                continue
-            seen_skill_fallback.add(sk)
-            conf = max(floor, min(0.90, 0.70 + (best_ratio - 0.86)))
-            out_fallback.append(
-                {
-                    "skill": best_skill,
-                    "confidence": round(conf, 2),
-                    "source": f"ner_span:{section}",
-                }
-            )
-            if len(out_fallback) >= max_rows:
-                break
-        out_fallback.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
-        return out_fallback
-
-    phrases = [p for p, _ in span_items]
-    try:
-        phrase_vectors = np.asarray(embedder.generate_embeddings(phrases), dtype=np.float32)
-    except Exception:
-        return []
-    if phrase_vectors.size == 0:
-        return []
-
-    sims = phrase_vectors @ skill_vectors.T
-    out: list[dict[str, Any]] = []
-    seen_skill: set[str] = set()
-    for i, (_phrase, section) in enumerate(span_items):
-        idx = int(np.argmax(sims[i]))
-        sim = float(sims[i, idx])
-        if sim < semantic_threshold:
-            continue
-        skill = skill_names[idx]
-        sk = _skill_key(skill)
-        if not sk or sk in seen_skill:
-            continue
-        seen_skill.add(sk)
-        weight = max(0.75, min(1.08, float(section_weights.get(section, 0.9))))
-        raw = min(0.90, sim * weight)
-        conf = _calibrate_confidence(raw, "ner_span", weight)
-        if conf < floor:
-            continue
-        out.append({"skill": skill, "confidence": round(conf, 2), "source": f"ner_span:{section}"})
-        if len(out) >= max_rows:
-            break
-    out.sort(key=lambda row: (-float(row["confidence"]), str(row["skill"])))
-    return out
 
 
 def _source_channel_family(source: str) -> str:
@@ -3503,9 +2912,7 @@ def _trim_evidence_fragment(frag: str, max_len: int = 88) -> str:
     s = re.sub(r"\|+", " ", s)
     s = re.sub(r"\s+", " ", s).strip(" .,:;|/\\-")
     s = _EVIDENCE_NOISE_LEAD_RE.sub("", s).strip()
-    # Remove leftover single-char garbage prefixes from OCR merges: "g html5, ..."
     s = re.sub(r"^[a-z]\s+(?=[a-z0-9]{3,})", "", s, flags=re.IGNORECASE)
-    # Trim dangling generic noise tail words.
     s = re.sub(r"\b(including|strong|advanced)\b$", "", s, flags=re.IGNORECASE).strip(" .,:;|/\\-")
     if len(s) <= max_len:
         return s
@@ -3626,7 +3033,6 @@ def _normalize_name_line(raw_line: str) -> str:
     line = re.sub(r"\s+", " ", str(raw_line or "")).strip()
     if not line:
         return ""
-    # Contact separators often appear on the same line as the candidate name.
     line = re.split(r"\s*•\s*|\s+\|\s+", line, maxsplit=1)[0]
     return line.strip(" -,:;|")
 
@@ -3725,6 +3131,16 @@ def extract_email(text: str) -> str | None:
         normalized = match.group(0).strip().lower()
         if normalized:
             return normalized
+    match = _EMAIL_RE.search(text)
+    if match:
+        normalized = match.group(0).strip().lower()
+        if normalized:
+            return normalized
+    fallback_match = re.search(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-z]{2,}", text, re.IGNORECASE)
+    if fallback_match:
+        normalized = fallback_match.group(0).strip().lower()
+        if normalized:
+            return normalized
     return None
 
 
@@ -3732,6 +3148,8 @@ def _clean_phone_candidate(value: str) -> str | None:
     cleaned = str(value or "")
     cleaned = cleaned.replace("\u200b", " ").replace("\u200c", " ").replace("\u200d", " ")
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -,:;|.")
+    if _DATE_RANGE_RE.match(cleaned):
+        return None
     digits = re.sub(r"\D", "", cleaned)
     if len(digits) < 8 or len(digits) > 15:
         return None
@@ -3775,6 +3193,12 @@ def extract_phone(text: str) -> str | None:
                 if "@" in context:
                     score += 1
                 candidates.append((score, -match.start(), cleaned))
+    if not candidates:
+        for match in _PHONE_RE.finditer(text):
+            cleaned = _clean_phone_candidate(match.group(0))
+            if not cleaned:
+                continue
+            candidates.append((0, -match.start(), cleaned))
     if not candidates:
         return None
     candidates.sort(reverse=True)
@@ -4124,6 +3548,10 @@ def parse_cv_safe(
         result["extracted_full_name"] = contact_details.get("full_name")
         result["extracted_email"] = contact_details.get("email")
         result["extracted_phone"] = contact_details.get("phone")
+        if not result["extracted_email"] and "@" in text:
+            result["warnings"].append("email_regex_no_match")
+        if not result["extracted_phone"] and re.search(r"\d{7,}", text):
+            result["warnings"].append("phone_regex_no_match")
     except Exception as exc:
         result["degraded"] = True
         result["errors"].append(_stage_error("extract_contact_details", exc))
@@ -4176,68 +3604,26 @@ def parse_cv_safe(
             rows = []
             result["degraded"] = True
             result["warnings"].append("invalid_skills_output")
-
-        catalog_keys = {
-            _skill_key(str(r.get("skill", "")))
-            for r in rows
-            if isinstance(r, dict) and r.get("skill")
-        }
         rejected_project_phrases: list[str] = []
-        open_rows = extract_open_vocabulary_skill_rows(
-            text=text,
-            catalog_skill_keys=catalog_keys,
-            min_confidence=safe_min_conf,
-            rejected_out=rejected_project_phrases,
-            known_skills=set(k.lower() for k in skills_list),
-        )
-        ner_rows = detect_skill_spans_with_ensemble(
-            text=text,
-            known_skills=skills_list,
-            min_confidence=safe_min_conf,
-            use_hf_ner=use_hf_ner,
-        )
-        soft_rows = extract_soft_skill_rows(text=text, min_confidence=safe_min_conf, fallback_mode=False)
-        sentence_rows = extract_sentence_skill_rows(text=text, min_confidence=safe_min_conf, debug=False)
-        context_board_rows = extract_context_board_skill_rows(
-            certifications=[str(item or "") for item in result.get("certifications", [])],
-            hands_on_projects=[str(item or "") for item in result.get("hands_on_projects", [])],
-            known_skills=skills_list,
-            min_confidence=safe_min_conf,
-        )
-        rows = _merge_skill_rows(rows, open_rows + ner_rows + soft_rows + sentence_rows + context_board_rows)
-        soft_channel_names = [
-            str(r.get("skill")).strip()
-            for r in soft_rows
-            if isinstance(r, dict) and r.get("skill")
-        ]
-        if not rows:
-            fallback_soft_rows = extract_soft_skill_rows(
-                text=text,
-                min_confidence=safe_min_conf,
-                fallback_mode=True,
-            )
-            rows = _merge_skill_rows(rows, fallback_soft_rows)
-            soft_channel_names = [
-                str(r.get("skill")).strip()
-                for r in fallback_soft_rows
-                if isinstance(r, dict) and r.get("skill")
-            ]
-        if use_semantic_augment and skills_list:
-            exist_keys = {
-                _skill_key(str(r.get("skill", "")))
-                for r in rows
-                if isinstance(r, dict) and r.get("skill")
-            }
-            aug_budget = float(skill_budget) if skill_budget and skill_budget > 0 else 0.45
-            aug_budget = min(aug_budget, 0.48)
-            augment_extra = augment_skills_semantically_gated(
-                text=text,
-                known_skills=skills_list,
-                existing_skill_keys=exist_keys,
-                min_confidence=safe_min_conf,
-                time_budget_seconds=aug_budget,
-            )
-            rows = rows + augment_extra
+        open_rows: list[dict[str, Any]] = []
+        ner_rows: list[dict[str, Any]] = []
+        soft_rows: list[dict[str, Any]] = []
+        sentence_rows: list[dict[str, Any]] = []
+        context_board_rows: list[dict[str, Any]] = []
+
+        cv_ner_rows: list[dict[str, Any]] = []
+        try:
+            from app.services.cv_ner_inference import extract_skills_filtered, is_available
+            if is_available():
+                cv_ner_rows = extract_skills_filtered(text)
+            else:
+                result["warnings"].append("cv_ner_model_unavailable")
+        except Exception as exc:
+            result["warnings"].append("cv_ner_model_unavailable")
+            result["errors"].append(_stage_error("cv_ner_finetuned", exc))
+
+        rows = _merge_skill_rows(rows, cv_ner_rows)
+        soft_channel_names: list[str] = []
         rows = enrich_skill_confidence_rows(rows, text=text, sections=section_map)
         rows_with_evidence: list[dict[str, Any]] = []
         for row in rows:

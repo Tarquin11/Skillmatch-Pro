@@ -25,7 +25,11 @@ from app.models.skill import Skill
 from app.schemas.candidate import CandidateListItem, CandidateUpdateRequest, CandidateUploadRespose
 from app.schemas.common import ErrorResponse
 from app.schemas.listing import ListQuery
-from app.services.active_learning import queue_unknown_entities_for_parsed_cv, should_queue_skill_review
+from app.services.active_learning import (
+    queue_certs_and_projects_for_review,
+    queue_unknown_entities_for_parsed_cv,
+    should_queue_skill_review,
+)
 from app.services.cv_parser import parse_cv_safe
 
 router = APIRouter(
@@ -633,6 +637,11 @@ async def upload_cv(
             warnings.append("Candidate profile could not be saved automatically.")
             parsed["warnings"] = warnings
             logger.exception("candidate_autosave_failure filename=%s", file.filename)
+
+        # Initialize queuing variables
+        queued_unknowns = []
+        cert_project_count = 0
+
         if candidate is not None:
             try:
                 queued_unknowns = queue_unknown_entities_for_parsed_cv(
@@ -642,12 +651,22 @@ async def upload_cv(
                     candidate_id=int(candidate.id),
                     created_by=(int(getattr(current_user, "id")) if getattr(current_user, "id", None) is not None else None),
                 )
+                # Also queue certifications and projects with low confidence for HITL review
+                cert_project_count = queue_certs_and_projects_for_review(
+                    db=db,
+                    certs=parsed.get("certifications") or [],
+                    projects=parsed.get("hands_on_projects") or [],
+                    candidate_id=int(candidate.id),
+                    created_by=(int(getattr(current_user, "id")) if getattr(current_user, "id", None) is not None else None),
+                )
             except Exception:
                 db.rollback()
                 warnings = list(parsed.get("warnings") or [])
                 warnings.append("Active learning queue could not be updated.")
                 parsed["warnings"] = warnings
                 logger.exception("active_learning_queue_failure filename=%s", file.filename)
+                queued_unknowns = []
+                cert_project_count = 0
 
         return CandidateUploadRespose(
             filename=file.filename,
@@ -673,7 +692,7 @@ async def upload_cv(
             certifications=parsed.get("certifications") or [],
             hands_on_projects=parsed.get("hands_on_projects") or [],
             project_skill_links=parsed.get("project_skill_links") or [],
-            needs_review_count=len(queued_unknowns),
+            needs_review_count=len(queued_unknowns) + cert_project_count,
             queued_unknown_entities=[
                 str(getattr(entity, "raw_value", "")).strip()
                 for entity in queued_unknowns
