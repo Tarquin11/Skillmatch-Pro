@@ -26,6 +26,8 @@ def _assert_upload_contract(body: dict) -> None:
         "certifications",
         "hands_on_projects",
         "project_skill_links",
+        "needs_review_count",
+        "queued_unknown_entities",
     }
     assert set(body.keys()) == expected
     assert isinstance(body["ok"], bool)

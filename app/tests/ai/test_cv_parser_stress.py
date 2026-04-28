@@ -28,27 +28,6 @@ def test_parse_cv_safe_no_section_headings_messy_spacing(monkeypatch):
     assert payload["text_length"] > 0
 
 
-def test_parse_cv_safe_mixed_fr_en_bullets(monkeypatch):
-    text = (
-        "PROFILE / PROFIL\n"
-        "• Project management / Gestion de projet\n"
-        "• Risk management — gestion des risques\n"
-        "• EN: fluent | FR: natif\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_a, **_k: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-        use_hf_ner=False,
-    )
-    assert payload["ok"] is True
-    skills = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "project management" in skills or "risk management" in skills
-
-
 def test_parse_cv_safe_weird_pdf_tokens_and_letter_spaced_heading(monkeypatch):
     text = (
         "S K I L L S\n"

@@ -10,6 +10,7 @@ def test_candidate_upload_response_contract_keys():
         "extracted_full_name", "extracted_email", "extracted_phone",
         "predicted_title", "predicted_experience_years",
         "certifications", "hands_on_projects", "project_skill_links",
+        "needs_review_count", "queued_unknown_entities",
     }
     assert set(data.keys()) == expected
     assert isinstance(data["errors"], list)

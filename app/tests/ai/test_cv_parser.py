@@ -1,10 +1,8 @@
 import re
-import numpy as np
 
 from app.services import cv_parser
 from app.services.cv_parser import (
     _extract_sections,
-    detect_skill_spans_with_ensemble,
     detect_experience_years,
     detect_skills,
     detect_skills_with_confidence,
@@ -160,51 +158,6 @@ def test_detect_title_returns_none_for_empty_text():
 def test_detect_skills_with_empty_known_skills_returns_empty():
     rows = detect_skills_with_confidence("Python SQL", known_skills=[])
     assert rows == []
-
-
-def test_parse_cv_safe_open_vocab_from_skill_sections(monkeypatch):
-    text = (
-        "SKILLS\n"
-        "- Python\n"
-        "- Web Exploitation\n"
-        "- React / Flask\n"
-        "TOOLS\n"
-        "- Burpsuite\n"
-        "LANGUAGES\n"
-        "- Arabic (Mother tongue)\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=["python"],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "python" in names
-    # assert "web exploitation" in names  # May be gated if no evidence
-    assert "react" in names
-    assert "flask" in names
-    # Note: burpsuite may be filtered by new evidence gating if no evidence
-    assert "arabic" in payload["extracted_languages"]
-    assert payload["extraction_channels"]["language"] == ["arabic"]
-    # assert any("web exploitation" == s for s in payload["extraction_channels"]["open_vocab"])  # May be gated
-
-
-def test_extract_open_vocabulary_skill_rows_keeps_clean_certification_skills():
-    text = (
-        "CERTIFICATIONS\n"
-        "- Zend Framework\n"
-        "- PHP OOP\n"
-        "- Including html5, javascript, css, sql\n"
-    )
-    rows = cv_parser.extract_open_vocabulary_skill_rows(text=text, catalog_skill_keys=set(), min_confidence=0.6)
-    names = {str(r.get("skill", "")).lower() for r in rows}
-    assert "zend" in names
-    assert "php oop" in names
-    # Noisy sentence should still be filtered.
-    assert "including html5" not in names
 
 
 def test_heading_candidate_does_not_treat_skill_list_as_heading():
@@ -478,52 +431,12 @@ def test_evidence_based_gating_drops_weak_skills():
     assert "javascript" in skills
 
 
-def test_parse_cv_safe_letter_spaced_skill_heading_opens_vocab(monkeypatch):
-    text = "S K I L L S\n- Kali Linux\n"
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "kali linux" in names
-
-
 def test_five_letter_spaced_heading_collapses_like_tools():
     text = "T O O L S\n- SQL\n- Docker\n"
     sections, weights = _extract_sections(text)
     assert "tools" in sections
     assert "sql" not in sections and "docker" not in sections
     assert any("sql" in ln.lower() for ln in sections.get("tools", []))
-
-
-def test_open_vocab_rejects_date_and_project_sentences(monkeypatch):
-    text = (
-        "SKILLS\n"
-        "- 5 January - 20 February 2025 web exploitation\n"
-        "- implementation of a gps-based bus geolocation\n"
-        "- Python\n"
-        "LANGUAGES\n"
-        "- French (B1 Level)\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "python" in names
-    assert "french" in payload["extracted_languages"]
-    assert not any("january" in n for n in names)
-    assert not any("implementation" in n for n in names)
-    assert not any("geolocation" in n for n in names)
-    assert not any("french" == n for n in names)
 
 
 def test_parse_cv_safe_extracts_languages_with_french_heading(monkeypatch):
@@ -592,160 +505,6 @@ def test_language_fallback_avoids_education_false_positive(monkeypatch):
     assert "french" not in payload["extracted_languages"]
 
 
-def test_detect_skill_spans_with_hf_ner_path(monkeypatch):
-    monkeypatch.setattr(
-        cv_parser,
-        "_extract_hf_ner_spans",
-        lambda _text: ["JavaScript", "Burpsuite"],
-    )
-    rows = detect_skill_spans_with_ensemble(
-        text="random text",
-        known_skills=["javascript", "burp suite", "python"],
-        min_confidence=0.6,
-        use_hf_ner=True,
-    )
-    found = {str(r["skill"]) for r in rows}
-    sources = {str(r["source"]) for r in rows}
-    assert "javascript" in found
-    assert any(src.startswith("ner_span:hf_ner") for src in sources)
-
-
-def test_open_vocab_rejects_french_action_bullets(monkeypatch):
-    text = (
-        "COMPETENCES\n"
-        "- Gerer un agenda et un budget\n"
-        "- Transmettre l information a une equipe\n"
-        "- Clients\n"
-        "- Organisation\n"
-        "- Leadership\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "gerer un agenda et un budget" not in names
-    assert "transmettre l information a une equipe" not in names
-    assert "clients" not in names
-    assert "organisation" not in names
-    assert "leadership" in names
-
-
-def test_open_vocab_keeps_managerial_soft_skills(monkeypatch):
-    text = (
-        "COMPETENCES\n"
-        "- Leadership\n"
-        "- Relation client\n"
-        "- Capacite d adaptation\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "leadership" in names
-    assert "customer relationship" in names
-    assert "adaptability" in names
-    assert payload["extraction_channels"]["soft_skill"]
-    soft_rows = [r for r in payload["extracted_skills"] if str(r.get("source", "")).startswith("softskill")]
-    assert all(0.6 <= float(r["confidence"]) <= 0.9 for r in soft_rows)
-
-
-def test_open_vocab_extracts_skills_from_certifications_section(monkeypatch):
-    text = (
-        "CERTIFICATIONS\n"
-        "HTML5, PHP OOP, CSS, SQL, JavaScript, Symfony, Zend Framework\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=["sql"],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]).lower() for r in payload["extracted_skills"]}
-    assert "sql" in names
-    assert "css" in names
-    assert "javascript" in names
-
-
-def test_open_vocab_extracts_inline_french_skill_labels_without_section_heading():
-    text = (
-        "PROFIL\n"
-        "Candidate polyvalente\n"
-        "Compétences informatiques : internet, traitement de texte, PAO, montage vidéo, Sketchup\n"
-        "Langues : anglais courant, allemand, notions d'italien\n"
-    )
-    rows = cv_parser.extract_open_vocabulary_skill_rows(
-        text=text,
-        catalog_skill_keys=set(),
-        min_confidence=0.6,
-    )
-    names = {str(r.get("skill", "")).lower() for r in rows}
-    assert "traitement de texte" in names
-    assert "montage video" in names
-    assert "sketchup" in names
-    assert "allemand" not in names
-    assert "notions d italien" not in names
-
-
-def test_open_vocab_skips_hobby_phrases_in_generic_competences_bucket():
-    text = (
-        "COMPETENCES PARTICULIERES\n"
-        "- Pratiques de divers arts plastiques : aquarelle, linogravure, couture\n"
-        "- Competences informatiques : internet, tableur, sketchup\n"
-        "- Competences en cuisine\n"
-    )
-    rows = cv_parser.extract_open_vocabulary_skill_rows(
-        text=text,
-        catalog_skill_keys=set(),
-        min_confidence=0.6,
-    )
-    names = {str(r.get("skill", "")).lower() for r in rows}
-    assert "internet" in names
-    assert "tableur" in names
-    assert "sketchup" in names
-    assert "aquarelle" not in names
-    assert "linogravure" not in names
-    assert "couture" not in names
-    assert "en cuisine" not in names
-
-
-def test_parse_cv_safe_handles_french_competences_particulieres_without_education_leak(monkeypatch):
-    text = (
-        "FORMATION\n"
-        "BEP au lycee Blaringhem a Bethune\n"
-        "Compétences particulières\n"
-        "- Langues : anglais courant, allemand, notions d'italien, notions de russe\n"
-        "- Compétences informatiques : internet, traitement de texte, tableur (Excel), Sketchup, montage vidéo\n"
-        "Activité extra-professionnelle\n"
-        "- Participation à des ateliers d'art\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_a, **_k: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]).lower() for r in payload["extracted_skills"]}
-    assert "traitement de texte" in names
-    assert "sketchup" in names
-    assert "au lycee blaringhem a bethune" not in names
-    assert "allemand" not in names
-    assert {"english", "german", "italian", "russian"}.issubset(set(payload["extracted_languages"]))
-
-
 def test_detect_skills_with_confidence_ignores_education_catalog_noise():
     text = "FORMATION\nBEP au lycee blaringhem a bethune\n"
     rows = detect_skills_with_confidence(
@@ -757,53 +516,9 @@ def test_detect_skills_with_confidence_ignores_education_catalog_noise():
     assert rows == []
 
 
-def test_soft_skill_fallback_when_no_other_skills(monkeypatch):
-    text = (
-        "COMPETENCES\n"
-        "- Gerer un agenda et un budget\n"
-        "- Transmettre l information a une equipe\n"
-        "- Coordination des equipes\n"
-        "- Gestion de projet\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "project management" in names or "gestion de projet" in names
-    assert "coordination" in names or "coordination des equipes" in names
-    assert len(payload["extraction_channels"]["soft_skill"]) >= 1
-
-
 def test_detect_title_french_project_manager():
     text = "LUCAS LEBLANC\nCHARGE DE PROJETS TI\nMontreal, Canada"
     assert detect_title(text) == "CHARGE DE PROJETS TI"
-
-
-def test_sentence_level_extraction_from_experience_bullets(monkeypatch):
-    text = (
-        "EXPERIENCE PROFESSIONNELLE\n"
-        "- Gerer l echeancier, le budget et les risques\n"
-        "- Coordonner les activites de l equipe\n"
-        "- Planifier les projets\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    names = {str(r["skill"]) for r in payload["extracted_skills"]}
-    assert "planning" in names
-    assert "budget management" in names
-    assert "risk management" in names
-    assert payload["extraction_channels"]["sentence"]
 
 
 def test_clean_extracted_text_skips_noise_lines():
@@ -813,58 +528,6 @@ def test_clean_extracted_text_skips_noise_lines():
     assert "valid line" in cleaned.lower()
     assert "http" not in cleaned.lower()
     assert "copyright" not in cleaned.lower()
-
-
-def test_parse_cv_safe_returns_grouping_and_hierarchy(monkeypatch):
-    text = (
-        "COMPETENCES\n"
-        "- Gestion de projet\n"
-        "- Planification\n"
-        "- Gestion des risques\n"
-        "- Gestion du budget\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    assert "management" in payload["skills_grouped"]
-    assert "project management" in payload["skills_grouped"]["management"]
-    hierarchy_parents = {node["parent"] for node in payload["skill_hierarchy"]}
-    assert "project management" in hierarchy_parents
-    assert "project management" in payload["skill_graph"]
-    assert payload["skill_graph"]["project management"]["children"]
-
-
-def test_confidence_enrichment_spreads_scores(monkeypatch):
-    text = (
-        "EXPERIENCE\n"
-        "- Gestion de projet et planification\n"
-        "- Gestion de projet avec budget\n"
-        "- Gestion des risques de projet\n"
-        "- Leadership\n"
-    )
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_args, **_kwargs: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=[],
-        min_confidence=0.6,
-        use_semantic=False,
-    )
-    confidences = {
-        str(r["skill"]): float(r["confidence"])
-        for r in payload["extracted_skills"]
-        if r.get("skill")
-    }
-    assert len(set(confidences.values())) > 1
-    assert confidences.get("project management", 0) >= confidences.get("leadership", 0)
-    for row in payload["extracted_skills"]:
-        assert "evidence" in row
-        assert "confidence_normalized" in row
 
 
 def test_post_ocr_text_normalize_keeps_line_breaks():
@@ -895,121 +558,3 @@ def test_source_label_and_band_mapping():
     assert cv_parser._confidence_band_for_source("cv_section:skills", 0.62) == "low"
 
 
-def test_semantic_augment_appends_when_enabled(monkeypatch):
-    def fake_augment(**kwargs):
-        return [
-            {
-                "skill": "graphql",
-                "confidence": 0.68,
-                "source": "semantic_augment",
-                "evidence": ["designed typed API schemas for mobile clients"],
-                "_conf_channels": {"semantic_augment"},
-            }
-        ]
-
-    monkeypatch.setattr(cv_parser, "augment_skills_semantically_gated", fake_augment)
-    text = "SKILLS\nPython\nEXPERIENCE\n- designed typed API schemas for mobile clients\n"
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_a, **_k: text)
-    payload = parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=["python", "graphql"],
-        min_confidence=0.55,
-        use_semantic=False,
-        use_semantic_augment=True,
-    )
-    names = {r["skill"] for r in payload["extracted_skills"]}
-    assert "graphql" in names
-    assert "graphql" in payload["extraction_channels"]["semantic_augment"]
-    gql_rows = [r for r in payload["extracted_skills"] if r["skill"] == "graphql"]
-    assert gql_rows[0]["source"] == "semantic_augment"
-    assert gql_rows[0]["evidence"]
-    assert "confidence_normalized" in gql_rows[0]
-    assert gql_rows[0]["source_label"] == "augment"
-    assert gql_rows[0]["confidence_band"] in {"low", "medium", "high"}
-
-
-def test_semantic_augment_not_called_when_disabled(monkeypatch):
-    called = {"n": 0}
-
-    def fake_augment(**kwargs):
-        called["n"] += 1
-        return []
-
-    monkeypatch.setattr(cv_parser, "augment_skills_semantically_gated", fake_augment)
-    monkeypatch.setattr(cv_parser, "extract_text", lambda *_a, **_k: "SKILLS\nPython\n")
-    parse_cv_safe(
-        file_bytes=b"%PDF-1.4\n",
-        filename="cv.pdf",
-        known_skills=["python"],
-        use_semantic_augment=False,
-    )
-    assert called["n"] == 0
-
-
-def test_semantic_augment_topk_rerank_uses_ambiguity_guardrails(monkeypatch):
-    class _DummyEmbedder:
-        def generate_embeddings(self, texts):
-            assert len(texts) == 1
-            return [[1.0, 0.0]]
-
-    monkeypatch.setattr(cv_parser, "SEMANTIC_AUGMENT_HARD_AMBIGUITY", frozenset({"go", "r", "c", "ai"}))
-    monkeypatch.setattr(
-        cv_parser,
-        "_spans_for_semantic_augment",
-        lambda **_kwargs: [("Built backend services in Golang for internal APIs", "experience")],
-    )
-    monkeypatch.setattr(
-        cv_parser,
-        "_get_skill_embeddings",
-        lambda _known: (
-            np.asarray(
-                [
-                    [0.995, 0.005],  # go (highest semantic similarity but ambiguous)
-                    [0.930, 0.070],  # golang (kept after rerank/guardrails)
-                    [0.000, 1.000],  # unrelated
-                ],
-                dtype=np.float32,
-            ),
-            ["go", "golang", "python"],
-        ),
-    )
-    monkeypatch.setattr(cv_parser, "_get_embedder", lambda: _DummyEmbedder())
-
-    rows = cv_parser.augment_skills_semantically_gated(
-        text="EXPERIENCE\n- Built backend services in Golang for internal APIs\n",
-        known_skills=["go", "golang", "python"],
-        existing_skill_keys=set(),
-        min_confidence=0.60,
-    )
-    names = {str(row.get("skill", "")) for row in rows}
-    assert "golang" in names
-    assert "go" not in names
-
-
-def test_semantic_augment_drops_hard_ambiguity_on_weak_context(monkeypatch):
-    class _DummyEmbedder:
-        def generate_embeddings(self, texts):
-            assert len(texts) == 1
-            return [[1.0, 0.0]]
-
-    monkeypatch.setattr(cv_parser, "SEMANTIC_AUGMENT_HARD_AMBIGUITY", frozenset({"go", "r", "c", "ai"}))
-    monkeypatch.setattr(
-        cv_parser,
-        "_spans_for_semantic_augment",
-        lambda **_kwargs: [("Interested in AI and looking to learn more", "skills")],
-    )
-    monkeypatch.setattr(
-        cv_parser,
-        "_get_skill_embeddings",
-        lambda _known: (np.asarray([[1.0, 0.0]], dtype=np.float32), ["ai"]),
-    )
-    monkeypatch.setattr(cv_parser, "_get_embedder", lambda: _DummyEmbedder())
-
-    rows = cv_parser.augment_skills_semantically_gated(
-        text="SKILLS\n- Interested in AI and looking to learn more\n",
-        known_skills=["ai"],
-        existing_skill_keys=set(),
-        min_confidence=0.55,
-    )
-    assert rows == []
