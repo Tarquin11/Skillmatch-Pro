@@ -400,24 +400,6 @@ def test_parse_cv_safe_prunes_skill_when_also_classified_as_certification(monkey
     assert "ejpt" not in skill_set
 
 
-def test_open_vocab_noise_rejects_including_phrases():
-    assert cv_parser._open_vocab_looks_like_noise_sentence("including html5, php oop, javascript, css, sql")
-    assert cv_parser._open_vocab_looks_like_noise_sentence("experience in web application development")
-
-
-def test_open_vocab_display_normalizes_leaky_labels_and_punctuation():
-    assert cv_parser._display_open_vocab_skill("programming languages javascript") == "javascript"
-    assert cv_parser._display_open_vocab_skill("strong | javascript") == "javascript"
-    assert cv_parser._display_open_vocab_skill("symfony.") == "symfony"
-    assert cv_parser._display_open_vocab_skill("php framework certificate zend") == "zend"
-
-
-def test_open_vocab_phrase_ok_filters_short_acronyms():
-    # Very short acronyms like "O" should be filtered outside skill sections   
-    assert not cv_parser._open_vocab_phrase_ok("O", language_section=False)
-    # But 3-letter ones like "PHP" should pass
-    assert cv_parser._open_vocab_phrase_ok("PHP", language_section=False)
-
 def test_evidence_based_gating_drops_weak_skills():
     rows = [
         {"skill": "python", "source": "exact", "evidence": []},  # Strong source, keep

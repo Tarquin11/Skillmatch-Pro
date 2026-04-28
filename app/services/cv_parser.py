@@ -103,49 +103,11 @@ _YEAR_RANGE_RE = re.compile(
     r"\b(19\d{2}|20\d{2})\s*(?:-|–|—|to)\s*(present|current|now|19\d{2}|20\d{2})\b",
     re.IGNORECASE,
 )
-_MONTH_NAME_RE = re.compile(
-    r"\b(january|february|march|april|may|june|july|august|september|october|november|december|"
-    r"jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b",
-    re.IGNORECASE,
-)
-_YEAR_TOKEN_RE = re.compile(r"\b(19|20)\d{2}\b")
 _LEADING_DATE_RANGE_RE = re.compile(
     r"^\s*\d{1,2}\s+[A-Za-z]+\s*[-–—]\s*\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?\s+",
     re.IGNORECASE,
 )
 _DATE_RANGE_RE = re.compile(r"^(19|20)\d{2}\s*[-–—]\s*(19|20)\d{2}$")
-_OPEN_VOCAB_BOILERPLATE = (
-    "implementation of",
-    "development of",
-    "contribution to",
-    "application for",
-    "system to provide",
-    "functionality to calculate",
-    "functionality to",
-    "tracking public",
-    "regional transport",
-    "transport society",
-    "mobile app developement",
-    "mobile app development",
-    "pentesting backend",
-    "based bus",
-    "bus geolocation",
-    "mise en place de",
-    "developpement de",
-    "développement de",
-    "contribution au",
-    "contribution a",
-    "application de suivi",
-    "real-time positioning",
-    "positioning system",
-    "including html5",
-    "including php oop",
-    "including javascript",
-    "including css",
-    "including sql",
-    "including html",
-    "strong |",
-)
 _LANGUAGE_ALIAS_MAP = {
     "english": "english",
     "anglais": "english",
@@ -385,99 +347,9 @@ def _env_float(name: str, default: float, *, min_value: float | None = None, max
     return float(value)
 
 
-def _env_int(name: str, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
-    raw = os.getenv(name)
-    if raw is None or not str(raw).strip():
-        value = int(default)
-    else:
-        try:
-            value = int(raw)
-        except ValueError:
-            value = int(default)
-    if min_value is not None:
-        value = max(int(min_value), value)
-    if max_value is not None:
-        value = min(int(max_value), value)
-    return int(value)
-
-
-def _env_csv_lower_set(name: str, default_csv: str) -> set[str]:
-    raw = os.getenv(name)
-    source = raw if raw is not None and str(raw).strip() else default_csv
-    out: set[str] = set()
-    for token in str(source).split(","):
-        cleaned = canonicalize_skill(token).strip().lower()
-        if cleaned:
-            out.add(cleaned)
-    return out
-
-
-_DEFAULT_SEMANTIC_AUGMENT_CALIBRATION_PATH = (
-    Path(__file__).resolve().parents[1] / "config" / "semantic_augment_calibration.json"
-)
-_SEMANTIC_AUGMENT_CALIBRATION_CACHE: dict[str, dict[str, Any]] | None = None
-
-
 def _is_skill_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _SKILL_HEADING_HINTS)
-
-
-_TECHNICAL_HEADING_HINTS = (
-    "skill",
-    "skills",
-    "tech",
-    "technical",
-    "technique",
-    "techniques",
-    "informatique",
-    "informatiques",
-    "software",
-    "tools",
-    "tool",
-    "technologies",
-    "technology",
-    "framework",
-    "frameworks",
-    "stack",
-    "programming",
-    "developpement",
-    "development",
-    "devops",
-    "cloud",
-    "data",
-    "database",
-    "cyber",
-    "security",
-    "securite",
-    "web",
-    "mobile",
-)
-
-FR_NOISE_WORDS = {
-    "en",
-    "de", 
-    "le", 
-    "la", 
-    "des", 
-    "pour",
-    "dans", 
-    "niveau", 
-    "obtenu", 
-    "notions", 
-    "maitrise", 
-    "pratique",
-    "divers", 
-    "particulieres"
-}
-
-def _is_technical_heading(section_key: str) -> bool:
-    key = _normalize_text(section_key)
-    if not key:
-        return False
-    if re.search(r"\bit\b", key):
-        return True
-    return any(h in key for h in _TECHNICAL_HEADING_HINTS)
 
 
 def _is_language_heading(section_key: str) -> bool:
@@ -873,57 +745,6 @@ def _get_embedder() -> EmbeddingService | None:
     return _EMBEDDER
 
 
-SEMANTIC_AUGMENT_MIN_SIMILARITY = _env_float(
-    "CV_PARSER_SEMANTIC_AUGMENT_MIN_SIMILARITY",
-    0.80,
-    min_value=0.30,
-    max_value=0.98,
-)
-SEMANTIC_AUGMENT_MAX_SPANS = _env_int(
-    "CV_PARSER_SEMANTIC_AUGMENT_MAX_SPANS",
-    72,
-    min_value=8,
-    max_value=250,
-)
-SEMANTIC_AUGMENT_TOP_CANDIDATES = _env_int(
-    "CV_PARSER_SEMANTIC_AUGMENT_TOP_CANDIDATES",
-    5,
-    min_value=1,
-    max_value=25,
-)
-SEMANTIC_AUGMENT_MIN_LEXICAL_OVERLAP = _env_float(
-    "CV_PARSER_SEMANTIC_AUGMENT_MIN_LEXICAL_OVERLAP",
-    0.08,
-    min_value=0.0,
-    max_value=1.0,
-)
-SEMANTIC_AUGMENT_AMBIGUOUS_MIN_SIM_BONUS = _env_float(
-    "CV_PARSER_SEMANTIC_AUGMENT_AMBIGUOUS_MIN_SIM_BONUS",
-    0.05,
-    min_value=0.0,
-    max_value=0.3,
-)
-SEMANTIC_AUGMENT_AMBIGUOUS_MIN_LEXICAL = _env_float(
-    "CV_PARSER_SEMANTIC_AUGMENT_AMBIGUOUS_MIN_LEXICAL",
-    0.45,
-    min_value=0.0,
-    max_value=1.0,
-)
-SEMANTIC_AUGMENT_BASE_THRESHOLD = _env_float(
-    "CV_PARSER_SEMANTIC_AUGMENT_BASE_THRESHOLD",
-    0.69,
-    min_value=0.50,
-    max_value=0.99,
-)
-SEMANTIC_AUGMENT_AMBIGUOUS_BASE_THRESHOLD = _env_float(
-    "CV_PARSER_SEMANTIC_AUGMENT_AMBIGUOUS_BASE_THRESHOLD",
-    0.78,
-    min_value=0.55,
-    max_value=0.995,
-)
-SEMANTIC_AUGMENT_HARD_AMBIGUITY = frozenset(
-    _env_csv_lower_set("CV_PARSER_SEMANTIC_AUGMENT_HARD_AMBIGUITY", "go,r,c,ai")
-)
 _SPAN_NEGATION_RE = re.compile(
     r"(?i)"
     r"(?:\bno\b|\bnot\b|\bnever\b|\bwithout\b|\blacking\b|\black\s+of\b|\bneither\b|\bnor\b|"
@@ -1101,195 +922,6 @@ def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str
         else:
             out[key] = value
     return out
-
-
-def _load_semantic_augment_calibration_config() -> dict[str, dict[str, Any]]:
-    global _SEMANTIC_AUGMENT_CALIBRATION_CACHE
-    if _SEMANTIC_AUGMENT_CALIBRATION_CACHE is not None:
-        return _SEMANTIC_AUGMENT_CALIBRATION_CACHE
-
-    defaults: dict[str, dict[str, Any]] = {
-        "semantic_augment": {
-            "method": "platt",
-            "a": 3.2,
-            "b": -1.6,
-            "threshold": SEMANTIC_AUGMENT_BASE_THRESHOLD,
-        },
-        "semantic_augment_ambiguous": {
-            "method": "isotonic",
-            "points": [
-                [0.0, 0.0],
-                [0.55, 0.48],
-                [0.70, 0.62],
-                [0.80, 0.78],
-                [1.0, 0.94],
-            ],
-            "threshold": SEMANTIC_AUGMENT_AMBIGUOUS_BASE_THRESHOLD,
-        },
-    }
-
-    env_path = (os.getenv("CV_PARSER_SEMANTIC_AUGMENT_CALIBRATION_PATH") or "").strip()
-    candidate_path = Path(env_path).expanduser() if env_path else _DEFAULT_SEMANTIC_AUGMENT_CALIBRATION_PATH
-    if candidate_path.exists():
-        try:
-            payload = json.loads(candidate_path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                normalized: dict[str, dict[str, Any]] = {}
-                for source_name, source_cfg in payload.items():
-                    if isinstance(source_cfg, dict):
-                        normalized[str(source_name)] = dict(source_cfg)
-                defaults = _deep_merge_dict(defaults, normalized)
-        except Exception:
-            logger.warning("Failed to load semantic augment calibration config: %s", candidate_path)
-
-    _SEMANTIC_AUGMENT_CALIBRATION_CACHE = defaults
-    return _SEMANTIC_AUGMENT_CALIBRATION_CACHE
-
-
-def _apply_isotonic_unit_interval(raw: float, points: Any) -> float:
-    x = max(0.0, min(1.0, float(raw)))
-    clean: list[tuple[float, float]] = []
-    for item in points or []:
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            continue
-        try:
-            px = max(0.0, min(1.0, float(item[0])))
-            py = max(0.0, min(1.0, float(item[1])))
-        except Exception:
-            continue
-        clean.append((px, py))
-    if not clean:
-        return x
-    clean.sort(key=lambda pair: pair[0])
-    isotonic: list[tuple[float, float]] = []
-    for px, py in clean:
-        if isotonic and px <= isotonic[-1][0]:
-            continue
-        if isotonic and py < isotonic[-1][1]:
-            py = isotonic[-1][1]
-        isotonic.append((px, py))
-    if not isotonic:
-        return x
-    if x <= isotonic[0][0]:
-        return isotonic[0][1]
-    if x >= isotonic[-1][0]:
-        return isotonic[-1][1]
-    for i in range(1, len(isotonic)):
-        x0, y0 = isotonic[i - 1]
-        x1, y1 = isotonic[i]
-        if x0 <= x <= x1:
-            if abs(x1 - x0) <= 1e-9:
-                return y1
-            t = (x - x0) / (x1 - x0)
-            return y0 + (y1 - y0) * t
-    return isotonic[-1][1]
-
-
-def _calibrate_semantic_augment_score(raw: float, source_key: str) -> float:
-    x = max(0.001, min(0.999, float(raw)))
-    cfg = _load_semantic_augment_calibration_config().get(source_key)
-    if not isinstance(cfg, dict):
-        cfg = _load_semantic_augment_calibration_config().get("semantic_augment", {})
-    method = str(cfg.get("method", "platt")).strip().lower()
-    if method == "isotonic":
-        return max(0.01, min(0.99, _apply_isotonic_unit_interval(x, cfg.get("points"))))
-    if method == "global_platt":
-        a, b, on = load_platt_params()
-        return apply_platt_on_unit_interval(x, a, b) if on else x
-    try:
-        a = float(cfg.get("a", 1.0))
-        b = float(cfg.get("b", 0.0))
-    except Exception:
-        return x
-    return max(0.01, min(0.99, apply_platt_on_unit_interval(x, a, b)))
-
-
-def _semantic_augment_threshold_for_source(source_key: str, min_confidence: float) -> float:
-    cfg = _load_semantic_augment_calibration_config().get(source_key)
-    if not isinstance(cfg, dict):
-        cfg = _load_semantic_augment_calibration_config().get("semantic_augment", {})
-    try:
-        calibrated_floor = float(cfg.get("threshold", SEMANTIC_AUGMENT_BASE_THRESHOLD))
-    except Exception:
-        calibrated_floor = SEMANTIC_AUGMENT_BASE_THRESHOLD
-    return max(float(min_confidence), max(0.01, min(0.995, calibrated_floor)))
-
-
-def _semantic_augment_token_set(value: str) -> set[str]:
-    return {tok for tok in _tokenize(_normalize_for_pattern(value)) if tok and not tok.isdigit()}
-
-
-def _semantic_augment_lexical_overlap(span: str, skill_display: str) -> float:
-    span_tokens = _semantic_augment_token_set(span)
-    skill_tokens = _semantic_augment_token_set(skill_display)
-    if not span_tokens or not skill_tokens:
-        return 0.0
-    return len(span_tokens & skill_tokens) / max(1, len(skill_tokens))
-
-
-def _semantic_augment_acronym_match(span: str, skill_display: str) -> bool:
-    span_tokens = _semantic_augment_token_set(span)
-    if not span_tokens:
-        return False
-    raw_acronym = _acronym(skill_display).strip().lower()
-    canonical_acronym = _acronym(canonicalize_skill(skill_display)).strip().lower()
-    candidates = {raw_acronym, canonical_acronym}
-    for candidate in candidates:
-        if len(candidate) >= 2 and candidate in span_tokens:
-            return True
-    return False
-
-
-def _semantic_augment_section_score(section_weight: float) -> float:
-    return max(0.0, min(1.0, (float(section_weight) - 0.75) / 0.35))
-
-
-def _semantic_augment_rerank_score(
-    sim: float,
-    lexical_overlap: float,
-    acronym_match: bool,
-    section_weight: float,
-) -> float:
-    sim_score = max(0.0, min(1.0, float(sim)))
-    lexical_score = max(0.0, min(1.0, float(lexical_overlap)))
-    acronym_bonus = 1.0 if acronym_match else 0.0
-    section_score = _semantic_augment_section_score(section_weight)
-    raw = (0.71 * sim_score) + (0.18 * lexical_score) + (0.07 * acronym_bonus) + (0.04 * section_score)
-    return max(0.0, min(1.0, raw))
-
-
-def _spans_for_semantic_augment(
-    *,
-    sections: dict[str, list[str]],
-) -> list[tuple[str, str]]:
-    """Non-overlapping substantive lines with section labels for reranking."""
-    spans: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for section, lines in sections.items():
-        if _is_language_heading(section):
-            continue
-        if _is_education_heading(section):
-            continue
-        for raw in lines:
-            line = raw.strip()
-            if not line or _is_noise_line(line):
-                continue
-            for p in BULLET_PREFIXES:
-                if line.startswith(p):
-                    line = line[len(p) :].strip()
-                    break
-            if len(line) < 12:
-                continue
-            line = re.sub(r"\s+", " ", line)[:240]
-            key = _normalize_text(line)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            spans.append((line, section))
-            if len(spans) >= SEMANTIC_AUGMENT_MAX_SPANS:
-                return spans
-    return spans
-
 
 
 def _get_skill_embeddings(known_skills: list[str]) -> tuple[np.ndarray | None, list[str]]:
@@ -1506,121 +1138,6 @@ def detect_skills_with_confidence(
     return hits
 
 
-_GENERIC_OPEN_VOCAB_DROP = frozenset(
-    {
-        "and",
-        "or",
-        "etc",
-        "other",
-        "others",
-        "various",
-        "multiple",
-        "strong",
-        "basic",
-        "advanced",
-        "none",
-        "n/a",
-        "na",
-        "some",
-        "many",
-        "niveau",
-        "obtenu",
-        "obtenu en",
-        "pratique de",
-        "pratiques de",
-        "notions",
-        "connaissances en",
-        "maitrise de",
-    }
-)
-_SOFT_SKILL_ALLOWLIST = frozenset(
-    {
-        "leadership",
-        "communication",
-        "travail dequipe",
-        "teamwork",
-        "relation client",
-        "customer relationship",
-        "autonomie",
-        "autonomy",
-        "capacite dadaptation",
-        "adaptability",
-        "gestion de projets",
-        "project management",
-    }
-)
-_SHORT_GENERIC_DROP = frozenset(
-    {
-        "client",
-        "clients",
-        "organisation",
-        "organisations",
-        "organization",
-        "organizations",
-        "equipe",
-        "equipes",
-        "team",
-        "teams",
-    }
-)
-_SOFT_SKILL_HINTS: dict[str, str] = {
-    "leadership": "leadership",
-    "communication": "communication",
-    "relation client": "customer relationship",
-    "customer relationship": "customer relationship",
-    "gestion de projet": "project management",
-    "gestion de projets": "project management",
-    "project management": "project management",
-    "gestion du budget": "budget management",
-    "budget": "budget management",
-    "gestion des risques": "risk management",
-    "risk management": "risk management",
-    "coordination": "coordination",
-    "travail dequipe": "teamwork",
-    "teamwork": "teamwork",
-    "capacite dadaptation": "adaptability",
-    "adaptability": "adaptability",
-    "planifier les projets": "planning",
-    "planification": "planning",
-    "calendrier": "scheduling",
-    "echeancier": "scheduling",
-    "echeance": "scheduling",
-    "risk": "risk management",
-    "risques": "risk management",
-    "systemes informatiques": "it systems",
-    "systeme informatique": "it systems",
-    "coordonner": "coordination",
-    "coordonner": "coordination",
-    "projects": "project management",
-    "projets": "project management",
-}
-_ACTION_VERB_PREFIXES = (
-    "gerer ",
-    "gérer ",
-    "transmettre ",
-    "connaitre ",
-    "connaître ",
-    "savoir ",
-    "planifier ",
-    "coordonner ",
-    "definir ",
-    "définir ",
-    "anticiper ",
-    "analyser ",
-    "apporter ",
-    "aider ",
-    "accompagner ",
-    "concevoir ",
-    "organiser ",
-    "manage ",
-    "define ",
-    "coordinate ",
-    "plan ",
-    "analyze ",
-    "help ",
-    "support ",
-)
-_LEADING_DETERMINERS = ("des ", "les ", "la ", "le ", "du ", "de ", "d ")
 _LANGUAGE_PROFICIENCY_HINTS = (
     "langue",
     "langues",
@@ -1654,28 +1171,6 @@ _NOISE_LINE_HINTS = (
     "linkedin.com/",
     "http://",
     "https://",
-)
-_OPEN_VOCAB_LABEL_PREFIX_RE = re.compile(
-    r"^(?:"
-    r"programming\s+languages?|"
-    r"technical\s+skills?|"
-    r"core\s+skills?|"
-    r"skills?|"
-    r"competences?|"
-    r"competences\s+techniques|"
-    r"technologies|"
-    r"tools?|"
-    r"frameworks?"
-    r")\s+",
-    re.IGNORECASE,
-)
-_OPEN_VOCAB_NOISE_PREFIX_RE = re.compile(
-    r"^(?:including|strong|advanced|expertise\s+in|experience\s+in)\s+",
-    re.IGNORECASE,
-)
-_OPEN_VOCAB_CERT_MARKER_RE = re.compile(
-    r"\b(?:certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|diplome|diplomes)\b",
-    re.IGNORECASE,
 )
 _CERTIFICATION_MARKER_RE = re.compile(
     r"\b(?:certified|certificate|certificates|certification|certifications|certificat|certificats|diploma|diplomas|license|licensed)\b",
@@ -1764,33 +1259,6 @@ _PROJECT_ACTION_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _INLINE_LABEL_SPLIT_RE = re.compile(r"^\s*([^:]{2,64}?)\s*:\s*(.+?)\s*$")
-_LANGUAGE_PHRASE_STOPWORDS = frozenset(
-    {
-        "langue",
-        "langues",
-        "language",
-        "languages",
-        "notion",
-        "notions",
-        "niveau",
-        "level",
-        "courant",
-        "courante",
-        "fluent",
-        "intermediaire",
-        "intermediate",
-        "native",
-        "mother",
-        "tongue",
-        "de",
-        "d",
-        "du",
-        "des",
-        "en",
-        "et",
-        "and",
-    }
-)
 _EVIDENCE_NOISE_LEAD_RE = re.compile(
     r"^(?:including|strong|advanced|expertise\s+in|experience\s+in)\s+",
     re.IGNORECASE,
@@ -1849,56 +1317,6 @@ def _strip_open_vocab_leading_junk(phrase: str) -> str:
     return s
 
 
-def _open_vocab_looks_like_noise_sentence(low: str) -> bool:
-    """Reject project descriptions and CV narrative merged into one 'skill' line."""
-    if _MONTH_NAME_RE.search(low) and _YEAR_TOKEN_RE.search(low):
-        return True
-    if re.search(r"\b\d{1,2}\s*[-–—/]\s*\d{1,2}\s+\w+\s+\d{4}\b", low):
-        return True
-    if "including" in low:
-        return True
-    if "experience in" in low:
-        return True
-    if "certificat" in low or "certification" in low or "diploma" in low:
-        return True
-    for frag in _OPEN_VOCAB_BOILERPLATE:
-        if frag in low:
-            return True
-    if low.count(".") >= 1 and len(low) > 35:
-        return True
-    padded = f" {low} "
-    stop_hits = sum(
-        1
-        for x in (
-            " the ",
-            " a ",
-            " an ",
-            " to ",
-            " for ",
-            " of ",
-            " with ",
-            " in ",
-            " on ",
-            " from ",
-            " that ",
-            " le ",
-            " la ",
-            " les ",
-            " des ",
-            " de ",
-            " du ",
-            " pour ",
-            " avec ",
-            " dans ",
-            " sur ",
-        )
-        if x in padded
-    )
-    if stop_hits >= 3 and len(low.split()) >= 6:
-        return True
-    return False
-
-
 def _is_noise_line(raw: str) -> bool:
     low = _normalize_text(raw)
     if not low:
@@ -1911,112 +1329,9 @@ def _normalize_for_pattern(text: str) -> str:
     return unicodedata.normalize("NFKD", low).encode("ascii", "ignore").decode("ascii")
 
 
-_OCR_CHAR_SWAP = str.maketrans({"0": "o", "1": "i", "3": "e", "5": "s", "7": "t"})
-
-
-def _deocr_low(text: str) -> str:
-    return (text or "").translate(_OCR_CHAR_SWAP)
-
-
-def _looks_high_noise_token(tok: str) -> bool:
-    t = tok.strip()
-    if not t:
-        return True
-    alnum = sum(ch.isalnum() for ch in t)
-    alpha = sum(ch.isalpha() for ch in t)
-    if alnum == 0:
-        return True
-    if alpha == 0:
-        return True
-    if (len(t) >= 6 and alpha / max(1, alnum) < 0.6) or (len(t) >= 8 and any(ch.isdigit() for ch in t)):
-        return True
-    return False
-
-
-def _contains_phrase(line_core: str, hint: str) -> bool:
-    patt = r"\b" + r"\s+".join(re.escape(p) for p in hint.split()) + r"\b"
-    return bool(re.search(patt, line_core))
-
-
 def _is_bullet_line(raw: str) -> bool:
     line = (raw or "").strip()
     return line.startswith(BULLET_PREFIXES)
-
-
-def _open_vocab_phrase_ok(raw: str, *, language_section: bool = False) -> bool:
-    phrase = _strip_open_vocab_leading_junk(raw)
-    phrase = _strip_parenthetical_qualifiers(phrase)
-    phrase = phrase.strip()
-    if not phrase:
-        return False
-    display = _normalize_open_vocab_display(phrase)
-    if not display:
-        return False
-    if _is_noise_skill_phrase(phrase):
-        return False
-    low = _deocr_low(_normalize_text(display))
-    low_core = re.sub(r"[^a-z0-9\s]", "", low).strip()
-    if not low_core or low_core in _GENERIC_OPEN_VOCAB_DROP:
-        return False
-    toks = [t for t in re.split(r"\s+", low_core) if t]
-    if toks and sum(1 for t in toks if _looks_high_noise_token(t)) >= max(1, len(toks) // 2):
-        return False
-    if len(low_core) <= 2 and not language_section:
-        return False
-    if len(toks) == 1 and len(low_core) <= 4 and low_core.isupper() and not language_section:
-        if len(low_core) <= 2:
-            return False
-    soft_key = low_core
-    if soft_key in _SOFT_SKILL_ALLOWLIST:
-        return True
-    if soft_key in _SHORT_GENERIC_DROP:
-        return False
-    if any(low.startswith(p) for p in _ACTION_VERB_PREFIXES):
-        return False
-    words = low_core.split()
-    if any(low_core.startswith(prefix) for prefix in _LEADING_DETERMINERS) and len(words) <= 4:
-        return False
-    if len(words) <= 2 and all(w in _GENERIC_OPEN_VOCAB_DROP for w in words):
-        return False
-    if len(low_core) < 2:
-        return False
-    max_chars = 72 if language_section else 56
-    if len(display) > max_chars:
-        return False
-    max_words = 5 if language_section else 6
-    if len(words) > max_words:
-        return False
-    if _open_vocab_looks_like_noise_sentence(low):
-        return False
-    return True
-
-
-def _normalize_open_vocab_display(raw: str) -> str:
-    phrase = _strip_open_vocab_leading_junk(raw)
-    phrase = _strip_parenthetical_qualifiers(phrase)
-    display = canonicalize_skill(phrase).strip() or phrase.strip()
-    display = re.sub(r"\|+", " ", display)
-    display = re.sub(r"\s+", " ", display).strip(" .,:;|/\\-")
-    if not display:
-        return ""
-
-    prev = None
-    while display and display != prev:
-        prev = display
-        display = _OPEN_VOCAB_LABEL_PREFIX_RE.sub("", display).strip()
-        display = _OPEN_VOCAB_NOISE_PREFIX_RE.sub("", display).strip()
-
-    m = _OPEN_VOCAB_CERT_MARKER_RE.search(display)
-    if m and m.end() < len(display):
-        tail = display[m.end() :].strip(" .,:;|/\\-")
-        if tail:
-            display = tail
-
-    return display.strip(" .,:;|/\\-")[:120]
-
-
-def _display_open_vocab_skill(raw: str) -> str:
-    return _normalize_open_vocab_display(raw)
 
 
 def _split_inline_labeled_phrase(raw: str) -> tuple[str, str]:
@@ -2029,31 +1344,6 @@ def _split_inline_labeled_phrase(raw: str) -> tuple[str, str]:
     label = _normalize_text(m.group(1))
     tail = m.group(2).strip()
     return label, tail
-
-
-def _looks_like_language_phrase(raw: str) -> bool:
-    low = _normalize_text(raw)
-    low = unicodedata.normalize("NFKD", low).encode("ascii", "ignore").decode("ascii")
-    low = re.sub(r"[^a-z0-9\s]", " ", low)
-    low = re.sub(r"\s+", " ", low).strip()
-    if not low:
-        return False
-    toks = [t for t in low.split() if t]
-    if not toks:
-        return False
-    core = [
-        t
-        for t in toks
-        if t not in _LANGUAGE_PHRASE_STOPWORDS and not _CEFR_RE.fullmatch(t.upper())
-    ]
-    if not core or len(core) > 3:
-        return False
-    candidate = " ".join(core)
-    if candidate in _LANGUAGE_ALIAS_MAP_NORM:
-        return True
-    if core[0] in _LANGUAGE_ALIAS_MAP_NORM:
-        return True
-    return False
 
 
 def _normalize_language_name(raw: str) -> str:
