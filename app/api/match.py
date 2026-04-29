@@ -105,7 +105,6 @@ def _title_alignment(job_title: str, position: str) -> float:
 
 
 @router.post("/job", response_model=JobMatchResponse)
-@router.post("/jobs", response_model=JobMatchResponse)
 def rank_candidates(
     payload: JobMatchRequest,
     page: int = Query(default=1, ge=1),

@@ -70,7 +70,7 @@ class ModelInferenceService:
     _CANARY_TRAFFIC_PERCENT = min(100.0, max(0.0, _CANARY_TRAFFIC_PERCENT))
     _CANARY_STICKY_SALT = os.getenv("AI_CANARY_STICKY_SALT","skillmatch-canary-v1")
     _CANARY_MATCHER: Any | None = None
-    _CANARY_LOAD_ATTEMTED = False
+    _CANARY_LOAD_ATTEMPTED = False
     _COLLAPSED_SCORE_MIN_ROWS = int(os.getenv("AI_COLLAPSED_SCORE_MIN_ROWS", "10"))
     _COLLAPSED_SCORE_MAX_UNIQUE = int(os.getenv("AI_COLLAPSED_SCORE_MAX_UNIQUE", "2"))
     _COLLAPSED_SCORE_STDDEV_MAX = float(os.getenv("AI_COLLAPSED_SCORE_STDDEV_MAX", "0.1"))
@@ -332,10 +332,10 @@ class ModelInferenceService:
     def _get_canary_matcher(cls) -> Any | None:
         if not cls._CANARY_ENABLED or cls._CANARY_TRAFFIC_PERCENT <= 0:
             return None
-        if cls._CANARY_LOAD_ATTEMTED:
+        if cls._CANARY_LOAD_ATTEMPTED:
             return cls._CANARY_MATCHER
         
-        cls._CANARY_LOAD_ATTEMTED = True
+        cls._CANARY_LOAD_ATTEMPTED = True
         if not cls._CANARY_MODEL_PATH.exists():
             logger.warning ("ai_canary_model_missing path=%s", cls._CANARY_MODEL_PATH)
             return None

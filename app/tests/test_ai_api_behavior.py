@@ -69,14 +69,6 @@ def test_match_job_schema_and_alias_consistency(client, admin_auth, monkeypatch)
     body_job = r_job.json()
     JobMatchResponse(**body_job)
 
-    r_jobs, _ = _call_match(client, admin_auth, payload, path="/match/jobs")
-    assert r_jobs.status_code == 200, r_jobs.text
-    body_jobs = r_jobs.json()
-    JobMatchResponse(**body_jobs)
-
-    assert [row["employee_id"] for row in body_job["results"]] == [
-        row["employee_id"] for row in body_jobs["results"]
-    ]
     assert len(body_job["results"]) <= payload["limit"]
 
 

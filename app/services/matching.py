@@ -13,6 +13,15 @@ def performance_weight(score: Optional[str]) -> float:
     return normalize_performance(score)
 
 
+def _normalize_skill_set(skills: Sequence[str]) -> set[str]:
+    out: set[str] = set()
+    for raw in skills or []:
+        normalized = normalize_skill_name(raw)
+        if normalized:
+            out.add(normalized)
+    return out
+
+
 def _extract_employee_skills(employee) -> list[str]:
     names: list[str] = []
     for item in getattr(employee, "skills", []) or []:
@@ -174,11 +183,3 @@ def calculate_match_score(
         return result["total"]
 
     return result
-
-def _normalize_skill_set(skills: Sequence[str]) -> set[str]:
-    out: set[str] = set()
-    for raw in skills or []:
-        normalized = normalize_skill_name(raw)
-        if normalized:
-            out.add(normalized)
-    return out
