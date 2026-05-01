@@ -1,9 +1,15 @@
+import logging
 from math import ceil
 from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.api.auth import get_current_active_user
+from app.core.structured_log import (
+    EVENT_AI_FALLBACK_USED,
+    REASON_FALLBACK_USED,
+    log_structured_event,
+)
 from app.db.database import get_db
 from app.models.employee import Employee
 from app.schemas.match import JobMatchRequest, JobMatchResponse, MatchCandidateOut
@@ -11,6 +17,7 @@ from app.services.model_inference import ModelInferenceService
 from app.services.matching import calculate_weighted_score
 from app.ai.preprocessing import normalize_performance, normalize_skill_name
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/match", tags=["matching"], dependencies=[Depends(get_current_active_user)])
 inference_service = ModelInferenceService()
 
@@ -42,6 +49,17 @@ def _recover_flat_scores_if_needed(
     scores = [float(row.get("predicted_fit_score", 0.0)) for row in rows]
     if len({round(score, 2) for score in scores}) > 1:
         return rows
+
+    log_structured_event(
+        logger,
+        level=logging.WARNING,
+        event=EVENT_AI_FALLBACK_USED,
+        reason=REASON_FALLBACK_USED,
+        component="match_api.recover_flat_scores",
+        candidate_count=len(rows),
+        collapsed_score=round(scores[0], 4) if scores else None,
+        job_title=str(payload.job_title or "")[:80],
+    )
 
     by_id = {int(emp.id): emp for emp in employees if getattr(emp, "id", None) is not None}
     recovered: list[dict] = []
