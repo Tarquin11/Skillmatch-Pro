@@ -21,6 +21,7 @@ _REVIEW_SOURCE_PREFIXES = (
 )
 _CONTEXT_CHARS = 280
 _MAX_RAW_VALUE_CHARS = 500
+_RESOLVED_STATUSES = ("approved", "rejected")
 
 
 def normalize_learning_value(raw: str | None, *, entity_type: str = "skill") -> str:
@@ -83,6 +84,62 @@ def should_queue_skill_review(
     return any(source_key.startswith(prefix) for prefix in _REVIEW_SOURCE_PREFIXES)
 
 
+def get_resolved_unknown_entity_for_term(
+    *,
+    db: Session,
+    raw_value: str | None,
+    entity_type: str = "skill",
+) -> UnknownEntity | None:
+    normalized = normalize_learning_value(raw_value, entity_type=entity_type)
+    if not normalized:
+        return None
+    return (
+        db.query(UnknownEntity)
+        .filter(
+            UnknownEntity.normalized_value == normalized,
+            UnknownEntity.status.in_(_RESOLVED_STATUSES),
+        )
+        .first()
+    )
+
+
+def resolve_approved_skill_for_term(
+    *,
+    db: Session,
+    skill_name: str | None,
+) -> Skill | None:
+    entity = get_resolved_unknown_entity_for_term(db=db, raw_value=skill_name, entity_type="skill")
+    if entity is None:
+        return None
+    if str(entity.status or "").lower() != "approved":
+        return None
+    if str(entity.resolved_entity_type or "").lower() != "skill":
+        return None
+    if entity.canonical_skill_id is not None:
+        skill = db.get(Skill, int(entity.canonical_skill_id))
+        if skill is not None:
+            return skill
+
+    review = (
+        db.query(EntityReview)
+        .filter(
+            EntityReview.unknown_entity_id == int(entity.id),
+            EntityReview.decision == "approved",
+            EntityReview.entity_type == "skill",
+        )
+        .order_by(EntityReview.created_at.desc(), EntityReview.id.desc())
+        .first()
+    )
+    canonical = str(getattr(review, "canonical_value", None) or entity.raw_value or "").strip()
+    if not canonical:
+        return None
+    return db.query(Skill).filter(func.lower(Skill.name) == canonical.lower()).first()
+
+
+def _is_pending_entity(entity: UnknownEntity) -> bool:
+    return str(entity.status or "").strip().lower() == "pending"
+
+
 def queue_unknown_entities_for_parsed_cv(
     *,
     db: Session,
@@ -117,6 +174,15 @@ def queue_unknown_entities_for_parsed_cv(
         if not normalized or normalized in seen_terms:
             continue
         seen_terms.add(normalized)
+        if (
+            get_resolved_unknown_entity_for_term(
+                db=db,
+                raw_value=raw_value,
+                entity_type="skill",
+            )
+            is not None
+        ):
+            continue
 
         evidence = _clean_evidence(row.get("evidence") or [])
         context_excerpt = evidence[0] if evidence else preview[:_CONTEXT_CHARS] or None
@@ -133,7 +199,8 @@ def queue_unknown_entities_for_parsed_cv(
             candidate_id=candidate_id,
             created_by=created_by,
         )
-        queued.append(entity)
+        if _is_pending_entity(entity):
+            queued.append(entity)
 
     if queued:
         db.commit()
@@ -167,6 +234,15 @@ def queue_certs_and_projects_for_review(
         if not normalized or normalized in seen_terms:
             continue
         seen_terms.add(normalized)
+        if (
+            get_resolved_unknown_entity_for_term(
+                db=db,
+                raw_value=cert_value,
+                entity_type="certification",
+            )
+            is not None
+        ):
+            continue
 
         entity = upsert_unknown_entity(
             db=db,
@@ -181,7 +257,8 @@ def queue_certs_and_projects_for_review(
             candidate_id=candidate_id,
             created_by=created_by,
         )
-        queued_count += 1
+        if _is_pending_entity(entity):
+            queued_count += 1
 
     # Queue projects - assign low confidence (0.65) so all go to HITL review
     for project_value in (projects or []):
@@ -193,6 +270,15 @@ def queue_certs_and_projects_for_review(
         if not normalized or normalized in seen_terms:
             continue
         seen_terms.add(normalized)
+        if (
+            get_resolved_unknown_entity_for_term(
+                db=db,
+                raw_value=project_value,
+                entity_type="project",
+            )
+            is not None
+        ):
+            continue
 
         entity = upsert_unknown_entity(
             db=db,
@@ -207,7 +293,8 @@ def queue_certs_and_projects_for_review(
             candidate_id=candidate_id,
             created_by=created_by,
         )
-        queued_count += 1
+        if _is_pending_entity(entity):
+            queued_count += 1
 
     if queued_count > 0:
         db.commit()

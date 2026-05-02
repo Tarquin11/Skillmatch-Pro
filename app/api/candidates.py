@@ -26,8 +26,10 @@ from app.schemas.candidate import CandidateListItem, CandidateUpdateRequest, Can
 from app.schemas.common import ErrorResponse
 from app.schemas.listing import ListQuery
 from app.services.active_learning import (
+    get_resolved_unknown_entity_for_term,
     queue_certs_and_projects_for_review,
     queue_unknown_entities_for_parsed_cv,
+    resolve_approved_skill_for_term,
     should_queue_skill_review,
 )
 from app.services.cv_parser import parse_cv_safe
@@ -410,6 +412,18 @@ def _persist_candidate_profile(
         seen_skills.add(key)
 
         skill = db.query(Skill).filter(func.lower(Skill.name) == key).first()
+        if skill is None:
+            resolved_entity = get_resolved_unknown_entity_for_term(
+                db=db,
+                raw_value=name,
+                entity_type="skill",
+            )
+            if resolved_entity is not None:
+                if str(resolved_entity.status or "").lower() == "approved":
+                    skill = resolve_approved_skill_for_term(db=db, skill_name=name)
+                if skill is None:
+                    continue
+
         if skill is None and should_queue_skill_review(
             skill_name=name,
             source=(str(row.get("source") or "") if isinstance(row, dict) else None),

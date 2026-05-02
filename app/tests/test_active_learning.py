@@ -6,16 +6,48 @@ from app.api import candidates as candidates_api
 UNKNOWN_TERM = "Quantum-Safe Cryptography"
 
 
-def _fake_parsed_payload(*, email: str, unknown_term: str = UNKNOWN_TERM) -> dict:
+def _fake_parsed_payload(
+    *,
+    email: str,
+    unknown_term: str = UNKNOWN_TERM,
+    include_unknown_skill: bool = True,
+    certifications: list[str] | None = None,
+    projects: list[str] | None = None,
+) -> dict:
+    skills = ["python"] + ([unknown_term] if include_unknown_skill else [])
+    extracted_skills = [
+        {
+            "skill": "python",
+            "confidence": 0.98,
+            "confidence_normalized": 1.0,
+            "source": "exact",
+            "source_label": "catalog_match",
+            "confidence_band": "high",
+            "evidence": ["Python"],
+        }
+    ]
+    if include_unknown_skill:
+        extracted_skills.append(
+            {
+                "skill": unknown_term,
+                "confidence": 0.64,
+                "confidence_normalized": 0.65,
+                "source": "cv_section:skills",
+                "source_label": "open_vocab",
+                "confidence_band": "low",
+                "evidence": [f"Skills: Python, {unknown_term}"],
+            }
+        )
+
     return {
         "ok": True,
         "degraded": False,
         "errors": [],
         "warnings": [],
         "text_length": 180,
-        "skills": ["python", unknown_term],
+        "skills": skills,
         "skills_grouped": {
-            "technical": ["python", unknown_term],
+            "technical": skills,
             "management": [],
             "business": [],
             "soft-skills": [],
@@ -27,53 +59,51 @@ def _fake_parsed_payload(*, email: str, unknown_term: str = UNKNOWN_TERM) -> dic
         "language_details": [{"language": "english", "level": "B2", "source": "language_section:languages"}],
         "extraction_channels": {
             "catalog_match": ["python"],
-            "open_vocab": [unknown_term],
+            "open_vocab": [unknown_term] if include_unknown_skill else [],
             "soft_skill": [],
             "sentence": [],
             "semantic_augment": [],
             "language": ["english"],
-            "certification": [],
-            "hands_on_project": [],
-            "project_text": [],
+            "certification": certifications or [],
+            "hands_on_project": projects or [],
+            "project_text": projects or [],
             "project_validated_skill": [],
         },
-        "extracted_skills": [
-            {
-                "skill": "python",
-                "confidence": 0.98,
-                "confidence_normalized": 1.0,
-                "source": "exact",
-                "source_label": "catalog_match",
-                "confidence_band": "high",
-                "evidence": ["Python"],
-            },
-            {
-                "skill": unknown_term,
-                "confidence": 0.64,
-                "confidence_normalized": 0.65,
-                "source": "cv_section:skills",
-                "source_label": "open_vocab",
-                "confidence_band": "low",
-                "evidence": [f"Skills: Python, {unknown_term}"],
-            },
-        ],
+        "extracted_skills": extracted_skills,
         "preview": f"Candidate mentions Python and {unknown_term}",
         "extracted_full_name": "Amina Review",
         "extracted_email": email,
         "extracted_phone": "+216 55 000 111",
         "predicted_title": "Security Engineer",
         "predicted_experience_years": 2.0,
-        "certifications": [],
-        "hands_on_projects": [],
+        "certifications": certifications or [],
+        "hands_on_projects": projects or [],
         "project_skill_links": [],
     }
 
 
-def _upload_cv(client, headers, monkeypatch, *, email: str, filename: str = "resume.pdf"):
+def _upload_cv(
+    client,
+    headers,
+    monkeypatch,
+    *,
+    email: str,
+    filename: str = "resume.pdf",
+    unknown_term: str = UNKNOWN_TERM,
+    include_unknown_skill: bool = True,
+    certifications: list[str] | None = None,
+    projects: list[str] | None = None,
+):
     monkeypatch.setattr(
         candidates_api,
         "parse_cv_safe",
-        lambda **_: _fake_parsed_payload(email=email),
+        lambda **_: _fake_parsed_payload(
+            email=email,
+            unknown_term=unknown_term,
+            include_unknown_skill=include_unknown_skill,
+            certifications=certifications,
+            projects=projects,
+        ),
         raising=False,
     )
     return client.post(
@@ -164,6 +194,108 @@ def test_admin_can_review_unknown_skill_and_future_upload_uses_new_skill(client,
     rows = candidates.json()
     assert rows, "Expected second uploaded candidate to be persisted"
     assert set(rows[0]["skills"]) == {"python", UNKNOWN_TERM}
+
+
+def test_admin_can_review_unknown_skill_with_canonical_alias(client, admin_auth, monkeypatch):
+    marker = uuid.uuid4().hex[:8]
+    raw_term = "Quantum Safe Crypto"
+    canonical_term = "Quantum-Safe Cryptography"
+    first_email = f"alias.learning.{marker}@example.com"
+    upload = _upload_cv(
+        client,
+        admin_auth,
+        monkeypatch,
+        email=first_email,
+        filename=f"alias_first_{marker}.pdf",
+        unknown_term=raw_term,
+    )
+    assert upload.status_code == 200, upload.text
+
+    unknowns = client.get("/learning/unknown-entities", headers=admin_auth, params={"search": raw_term})
+    assert unknowns.status_code == 200, unknowns.text
+    entity_id = int(unknowns.json()[0]["id"])
+
+    review = client.post(
+        f"/learning/unknown-entities/{entity_id}/review",
+        headers=admin_auth,
+        json={
+            "decision": "approved",
+            "entity_type": "skill",
+            "canonical_value": canonical_term,
+            "notes": "Use canonical taxonomy wording",
+        },
+    )
+    assert review.status_code == 200, review.text
+
+    second_marker = uuid.uuid4().hex[:8]
+    second_email = f"alias.learning.second.{second_marker}@example.com"
+    second_upload = _upload_cv(
+        client,
+        admin_auth,
+        monkeypatch,
+        email=second_email,
+        filename=f"alias_second_{second_marker}.pdf",
+        unknown_term=raw_term,
+    )
+    assert second_upload.status_code == 200, second_upload.text
+    second_body = second_upload.json()
+    assert second_body["needs_review_count"] == 0
+    assert second_body["queued_unknown_entities"] == []
+
+    candidates = client.get("/candidates/", headers=admin_auth, params={"search": second_marker, "limit": 20})
+    assert candidates.status_code == 200, candidates.text
+    rows = candidates.json()
+    assert rows, "Expected second uploaded candidate to be persisted"
+    assert set(rows[0]["skills"]) == {"python", canonical_term}
+
+
+def test_reviewed_project_is_not_queued_again(client, admin_auth, monkeypatch):
+    marker = uuid.uuid4().hex[:8]
+    project_name = "Zero Trust Migration Lab"
+    first_email = f"project.learning.{marker}@example.com"
+    upload = _upload_cv(
+        client,
+        admin_auth,
+        monkeypatch,
+        email=first_email,
+        filename=f"project_first_{marker}.pdf",
+        include_unknown_skill=False,
+        projects=[project_name],
+    )
+    assert upload.status_code == 200, upload.text
+    assert upload.json()["needs_review_count"] == 1
+
+    unknowns = client.get("/learning/unknown-entities", headers=admin_auth, params={"search": project_name})
+    assert unknowns.status_code == 200, unknowns.text
+    queue = unknowns.json()
+    assert queue, "Expected project to be queued before review"
+    entity_id = int(queue[0]["id"])
+
+    review = client.post(
+        f"/learning/unknown-entities/{entity_id}/review",
+        headers=admin_auth,
+        json={
+            "decision": "approved",
+            "entity_type": "project",
+            "canonical_value": project_name,
+        },
+    )
+    assert review.status_code == 200, review.text
+    assert review.json()["status"] == "approved"
+
+    second_marker = uuid.uuid4().hex[:8]
+    second_email = f"project.learning.second.{second_marker}@example.com"
+    second_upload = _upload_cv(
+        client,
+        admin_auth,
+        monkeypatch,
+        email=second_email,
+        filename=f"project_second_{second_marker}.pdf",
+        include_unknown_skill=False,
+        projects=[project_name],
+    )
+    assert second_upload.status_code == 200, second_upload.text
+    assert second_upload.json()["needs_review_count"] == 0
 
 
 def test_learning_endpoints_require_admin_policy(client, admin_auth, user_auth, monkeypatch):
