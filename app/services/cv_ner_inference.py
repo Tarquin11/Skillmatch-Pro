@@ -29,19 +29,11 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "data" / "models" / "cv_ner" / "cv_ner_final"
 LEXICON_PATH = ROOT / "data" / "lexicons" / "esco_lexicon.json"
-
-# Option-B quality thresholds for filtering NER skill predictions
-_HIGH_CONFIDENCE = 0.70   # always keep
-_LOW_CONFIDENCE = 0.55    # keep only if present in ESCO lexicon
-
-# Window settings — XLM-R max length is 512 subword tokens. We use a smaller
-# window with overlap so entities near a boundary aren't truncated.
-_WINDOW_CHARS = 1800       # ~400 tokens worth of typical CV text
-_OVERLAP_CHARS = 200       # ~40 tokens overlap
-
-# Confidence floor: drop spans below this score
+_HIGH_CONFIDENCE = 0.78 
+_LOW_CONFIDENCE = 0.55    
+_WINDOW_CHARS = 1800       
+_OVERLAP_CHARS = 200       
 _MIN_SCORE = 0.55
-
 _pipeline = None
 _pipeline_lock = threading.Lock()
 _load_failed = False

@@ -328,7 +328,9 @@ MAX_NGRAM_TOKENS = 3_000
 MAX_SECTION_PHRASES = 1_200
 MAX_PHRASE_CHARS = 180
 MAX_KNOWN_SKILLS = 5_000
-DEFAULT_SKILL_TIME_BUDGET_SECONDS = 0.75
+DEFAULT_SKILL_TIME_BUDGET_SECONDS = float(
+    os.getenv("CV_PARSER_SKILL_TIME_BUDGET_SECONDS", "2.0")
+)
 
 
 def _env_float(name: str, default: float, *, min_value: float | None = None, max_value: float | None = None) -> float:
@@ -350,21 +352,16 @@ def _env_float(name: str, default: float, *, min_value: float | None = None, max
 def _is_skill_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _SKILL_HEADING_HINTS)
-
-
 def _is_language_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _LANGUAGE_HEADING_HINTS)
-
 def _is_certification_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _CERTIFICATION_HEADING_HINTS)
 
-
 def _is_project_heading(section_key: str) -> bool:
     key = _normalize_text(section_key)
     return any(h in key for h in _PROJECT_HEADING_HINTS)
-
 
 def _is_noise_skill_phrase(phrase: str) -> bool:
     p = _normalize_text(phrase)
@@ -402,7 +399,6 @@ def _post_ocr_text_normalize(text: str) -> str:
         line = re.sub(r"\b([A-Z])\s+([a-z])", r"\1\2", line)
         out_lines.append(line)
     return "\n".join(out_lines).strip()
-
 
 def extract_text(file_bytes, filename):
     name = (filename or "").lower()
@@ -519,7 +515,6 @@ def _looks_like_semantic_section_heading(key: str, words: list[str]) -> bool:
             "formations",
         }
     return False
-
 
 def _matches_resume_section_heading(key: str, words: list[str]) -> bool:
     """True if this short line is a typical CV section title, not a skill/tool bullet."""
@@ -2888,7 +2883,7 @@ def parse_cv_safe(
                 time_budget_seconds=skill_budget,
             )
         elapsed = time.perf_counter() - start
-        budget_hit = bool(skill_budget and elapsed >= (skill_budget * 0.98))
+        budget_hit = bool(skill_budget and elapsed > skill_budget)
 
         if not isinstance(rows, list):
             rows = []
