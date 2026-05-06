@@ -1,5 +1,5 @@
 from typing import Callable
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -89,6 +89,19 @@ def list_users(
     _ = current_user
     return db.query(User).order_by(User.id.asc()).all()
 
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user_as_admin(
+    user: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    return auth_service.create_user(
+        db,
+        user,
+        allow_admin_role=True,
+        actor_user_id=current_user.id,
+    )
+
 def require_policy(policy: str) -> Callable:
     allowed_roles = roles_for_policy(policy)
 
@@ -114,3 +127,16 @@ def patch_user_role(
         target_user_id=user_id,
         new_role=role_update.role,
     )
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    auth_service.delete_user(
+        db,
+        actor_user_id=current_user.id,
+        target_user_id=user_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

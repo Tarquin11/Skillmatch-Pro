@@ -2,6 +2,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from typing import Deque
 from fastapi import HTTPException, status
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import create_access_token,generate_refresh_token,get_password_hash,hash_token,verify_password
@@ -61,6 +62,80 @@ def update_user_role(
     db.refresh(target_user)
     return target_user
 
+def _another_admin_exists(db: Session, user_id: int) -> bool:
+    return db.query(User.id).filter(User.role == "admin", User.id != user_id).first() is not None
+
+def _null_out_nullable_user_references(db: Session, target_user_id: int) -> None:
+    inspector = inspect(db.get_bind())
+    for table_name in inspector.get_table_names():
+        columns = {str(column.get("name")): column for column in inspector.get_columns(table_name)}
+        for foreign_key in inspector.get_foreign_keys(table_name):
+            if foreign_key.get("referred_table") != "users":
+                continue
+            referred_columns = foreign_key.get("referred_columns") or []
+            constrained_columns = foreign_key.get("constrained_columns") or []
+            if "id" not in referred_columns:
+                continue
+            for column_name in constrained_columns:
+                column = columns.get(str(column_name))
+                if not column or not column.get("nullable", False):
+                    continue
+                db.execute(
+                    text(
+                        f'UPDATE "{table_name}" '
+                        f'SET "{column_name}" = NULL '
+                        f'WHERE "{column_name}" = :target_user_id'
+                    ),
+                    {"target_user_id": target_user_id},
+                )
+
+def _reassign_required_user_references(
+    db: Session,
+    *,
+    actor_user_id: int,
+    target_user_id: int,
+) -> None:
+    from app.models.active_learning import EntityReview
+
+    db.query(EntityReview).filter(EntityReview.reviewer_id == target_user_id).update(
+        {EntityReview.reviewer_id: actor_user_id},
+        synchronize_session=False,
+    )
+
+def delete_user(
+    db: Session,
+    *,
+    actor_user_id: int,
+    target_user_id: int,
+) -> None:
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "user_not_found", "message": "User not found"},
+        )
+
+    if actor_user_id == target_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "self_user_delete_forbidden", "message": "Admin cannot delete self"},
+        )
+
+    if target_user.role == "admin" and not _another_admin_exists(db, target_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "last_admin_delete_forbidden", "message": "At least one admin is required"},
+        )
+
+    _null_out_nullable_user_references(db, target_user.id)
+    _reassign_required_user_references(
+        db,
+        actor_user_id=actor_user_id,
+        target_user_id=target_user.id,
+    )
+    db.delete(target_user)
+    db.commit()
+
 def _apply_login_rate_limit(email: str, client_ip: str) -> None:
     now_ts = _now_utc().timestamp()
     window = settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS
@@ -115,7 +190,13 @@ def _reset_failed_login_state(user: User) -> None:
     user.last_failed_login_at = None
     user.locked_until = None
 
-def create_user(db: Session, user: UserCreate):
+def create_user(
+    db: Session,
+    user: UserCreate,
+    *,
+    allow_admin_role: bool = False,
+    actor_user_id: int | None = None,
+):
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail={"code": "email_already_registered", "message": "Email already registered"})
@@ -124,7 +205,7 @@ def create_user(db: Session, user: UserCreate):
     if is_first_user:
         role = requested_role if requested_role is not None else "admin"
     else:
-        if requested_role == "admin":
+        if requested_role == "admin" and not allow_admin_role:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -134,7 +215,12 @@ def create_user(db: Session, user: UserCreate):
             )
         role = requested_role if requested_role is not None else "user"
     hashed_pwd = get_password_hash(user.password)
-    new_user = User(email=user.email, hashed_password=hashed_pwd, role=role)
+    new_user = User(
+        email=user.email,
+        hashed_password=hashed_pwd,
+        role=role,
+        created_by=actor_user_id,
+    )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
