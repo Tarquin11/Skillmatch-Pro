@@ -367,6 +367,20 @@ def _resolve_candidate_display_name(parsed: dict, filename: str) -> str:
     return _display_name_from_filename(filename)
 
 
+def _extraction_is_empty(parsed: dict) -> bool:
+    if int(parsed.get("text_length") or 0) == 0:
+        return True
+    has_skills = bool(parsed.get("extracted_skills"))
+    has_contact = any(
+        parsed.get(key)
+        for key in ("extracted_full_name", "extracted_email", "extracted_phone")
+    )
+    has_title = bool(parsed.get("predicted_title"))
+    has_certs = bool(parsed.get("certifications"))
+    has_projects = bool(parsed.get("hands_on_projects"))
+    return not (has_skills or has_contact or has_title or has_certs or has_projects)
+
+
 def _persist_candidate_profile(
     *,
     db: Session,
@@ -638,21 +652,40 @@ async def upload_cv(
         )
         candidate = None
         queued_unknowns = []
-        try:
-            candidate = _persist_candidate_profile(
-                db=db,
-                filename=(file.filename or safe_name),
-                parsed=parsed,
-                known_skill_names=known_skills,
-                created_by=(int(getattr(current_user, "id")) if getattr(current_user, "id", None) is not None else None),
-            )
-        except Exception:
-            db.rollback()
+
+        # Dismiss CVs that yielded nothing actionable — no text, no entities,
+        # no contact info, no title, no certs, no projects. Persisting these
+        # would create an empty Candidate row and pollute the dashboard.
+        if _extraction_is_empty(parsed):
             parsed["degraded"] = True
             warnings = list(parsed.get("warnings") or [])
-            warnings.append("Candidate profile could not be saved automatically.")
+            warnings.append("cv_dismissed_empty_extraction")
             parsed["warnings"] = warnings
-            logger.exception("candidate_autosave_failure filename=%s", file.filename)
+            log_structured_event(
+                logger,
+                level=logging.INFO,
+                event=EVENT_CV_PARSE_FAILURE,
+                reason=REASON_PARSING_FAIL,
+                stage="empty_extraction_dismissed",
+                filename=file.filename,
+                text_length=int(parsed.get("text_length") or 0),
+            )
+        else:
+            try:
+                candidate = _persist_candidate_profile(
+                    db=db,
+                    filename=(file.filename or safe_name),
+                    parsed=parsed,
+                    known_skill_names=known_skills,
+                    created_by=(int(getattr(current_user, "id")) if getattr(current_user, "id", None) is not None else None),
+                )
+            except Exception:
+                db.rollback()
+                parsed["degraded"] = True
+                warnings = list(parsed.get("warnings") or [])
+                warnings.append("Candidate profile could not be saved automatically.")
+                parsed["warnings"] = warnings
+                logger.exception("candidate_autosave_failure filename=%s", file.filename)
 
         # Initialize queuing variables
         queued_unknowns = []
