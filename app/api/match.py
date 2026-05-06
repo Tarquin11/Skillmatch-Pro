@@ -4,7 +4,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from app.api.auth import get_current_active_user
+from app.api.auth import get_current_active_user, require_roles
 from app.core.structured_log import (
     EVENT_AI_FALLBACK_USED,
     REASON_FALLBACK_USED,
@@ -18,7 +18,7 @@ from app.services.matching import calculate_weighted_score
 from app.ai.preprocessing import normalize_performance, normalize_skill_name
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/match", tags=["matching"], dependencies=[Depends(get_current_active_user)])
+router = APIRouter(prefix="/match", tags=["matching"], dependencies=[Depends(require_roles("admin", "recruiter"))])
 inference_service = ModelInferenceService()
 
 

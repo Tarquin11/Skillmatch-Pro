@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.api.auth import get_current_active_user
+from app.api.auth import get_current_active_user, require_roles
 from app.api.utils import apply_list_query
 from app.core.structured_log import (
     EVENT_CV_PARSE_FAILURE,
@@ -443,7 +443,7 @@ def _persist_candidate_profile(
     return employee
 
 
-@router.get("/", response_model=list[CandidateListItem])
+@router.get("/", response_model=list[CandidateListItem], dependencies=[Depends(require_roles("admin"))])
 def list_candidates(
     params: ListQuery = Depends(),
     db: Session = Depends(get_db),
@@ -476,6 +476,7 @@ def list_candidates(
 @router.patch(
     "/{candidate_id}",
     response_model=CandidateListItem,
+    dependencies=[Depends(require_roles("admin"))],
     responses={
         400: {"model": ErrorResponse},
         404: {"model": ErrorResponse},
@@ -551,6 +552,7 @@ def update_candidate(
     "/{candidate_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
+    dependencies=[Depends(require_roles("admin"))],
     responses={
         404: {"model": ErrorResponse},
     },
@@ -576,7 +578,7 @@ def delete_candidate(
 async def upload_cv(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(require_roles("admin", "recruiter")),
 ):
     if not file.filename or not file.filename.lower().endswith((".pdf", ".docx")):
         log_structured_event(
