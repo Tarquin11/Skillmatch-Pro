@@ -211,3 +211,5 @@ docker run --rm -p 8000:8000 --env-file .env skillmatch-pro-back
 - `README.fr.md` is the French version for academic / supervisor reporting.
 - `AI_retraining.md` contains the operational retraining runbook.
 - Large artifacts (trained model weights, ESCO data, generated training sets) are gitignored — they're regenerable via the scripts above.
+
+The journey ends here , thank you !
